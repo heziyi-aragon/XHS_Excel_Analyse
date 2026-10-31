@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -21,13 +22,33 @@ from main import describe_criterion, format_value, humanize_text
 DATA = Path(__file__).parent.parent / "static"
 
 
-class ResponseSequence:
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
-        self.responses = responses
-        self.calls = 0
+def reason_draft() -> dict[str, Any]:
+    return {
+        "stance": "recommend",
+        "tag": "进店好",
+        "sentence": "进店中位数较高，但进店成本只是中等，先留在中间档。",
+    }
 
-    def __call__(self, _system: str, _payload: dict[str, Any]) -> dict[str, Any]:
-        response = self.responses[self.calls]
+
+class ResponseSequence:
+    def __init__(
+        self,
+        responses: list[dict[str, Any]],
+        default: dict[str, Any] | None = None,
+    ) -> None:
+        self.responses = responses
+        self.default = default
+        self.calls = 0
+        self.payloads: list[dict[str, Any]] = []
+
+    def __call__(self, _system: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.payloads.append(payload)
+        if self.calls < len(self.responses):
+            response = self.responses[self.calls]
+        elif self.default is not None:
+            response = self.default
+        else:
+            raise IndexError("scripted LLM responses exhausted")
         self.calls += 1
         return response
 
@@ -233,9 +254,11 @@ class RequirementNodeTests(unittest.TestCase):
             self.assertNotIn(machine_word, text)
 
     def test_graph_skips_client_confirmation_when_requirements_are_complete(self) -> None:
-        graph = build_graph(
-            LLMClient(transport=ResponseSequence([complete_profile(), valid_policy()]))
+        sequence = ResponseSequence(
+            [complete_profile(), valid_policy()],
+            default=reason_draft(),
         )
+        graph = build_graph(LLMClient(transport=sequence))
         config = {"configurable": {"thread_id": "complete-review"}}
         result = graph.invoke(
             {
@@ -253,10 +276,40 @@ class RequirementNodeTests(unittest.TestCase):
             Command(resume={"action": "approve"}),
             config=config,
         )
-        self.assertEqual(completed["workflow_status"], "policy_approved")
+        self.assertEqual(completed["workflow_status"], "reasons_ready")
         self.assertEqual(completed["policy_review_status"], "approved")
         self.assertFalse(completed["next_step"]["implemented"])
-        self.assertEqual(completed["next_step"]["name"], "preprocess_table")
+        self.assertEqual(completed["next_step"]["name"], "audit_reasons")
+
+        evaluated = completed["evaluated_talents"]
+        by_name = {item["nickname"]: item for item in evaluated}
+        self.assertNotIn("走走停停Vlog", by_name)
+        self.assertNotIn("慢生活收藏家", by_name)
+        self.assertNotIn("Mira的护肤手账", by_name)
+        self.assertEqual(by_name["麦浪MaiLang"]["band"], "clear_yes")
+        self.assertEqual(by_name["麦浪MaiLang"]["source"], "rules")
+        self.assertEqual(by_name["麦浪MaiLang"]["tag"], "进店好")
+        self.assertEqual(by_name["美丽研习社官方号"]["band"], "clear_no")
+        self.assertEqual(by_name["美丽研习社官方号"]["source"], "rules")
+        self.assertEqual(by_name["早八小满"]["band"], "mid")
+        self.assertEqual(by_name["早八小满"]["tag"], "进店好")
+        self.assertEqual(by_name["早八小满"]["source"], "model")
+        self.assertEqual(
+            by_name["早八小满"]["evidence"]["visit_store_med"],
+            by_name["早八小满"]["talent"]["visit_store_med"],
+        )
+
+        reason_payloads = [item for item in sequence.payloads if "candidate" in item]
+        mid_names = [item["nickname"] for item in evaluated if item["band"] == "mid"]
+        self.assertEqual(len(reason_payloads), len(mid_names))
+        everyone = [item["nickname"] for item in completed["cleaned_talents"]]
+        for payload in reason_payloads:
+            text = json.dumps(payload, ensure_ascii=False)
+            nickname = payload["candidate"]["nickname"]
+            self.assertIn(nickname, mid_names)
+            for name in everyone:
+                if name != nickname:
+                    self.assertNotIn(name, text)
 
     def test_graph_resumes_after_client_answers(self) -> None:
         incomplete = complete_profile()
@@ -311,7 +364,12 @@ class RequirementNodeTests(unittest.TestCase):
 
     def test_cli_approval_reaches_next_step_without_client_prompt(self) -> None:
         graph = build_graph(
-            LLMClient(transport=ResponseSequence([complete_profile(), valid_policy()]))
+            LLMClient(
+                transport=ResponseSequence(
+                    [complete_profile(), valid_policy()],
+                    default=reason_draft(),
+                )
+            )
         )
         output = io.StringIO()
         with (
@@ -328,6 +386,8 @@ class RequirementNodeTests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn("筛选方案审核通过", rendered)
+        self.assertIn("推荐名单", rendered)
+        self.assertIn("中间档", rendered)
         self.assertNotIn("表格预处理", rendered)
         self.assertNotIn("接口已经预留", rendered)
         self.assertNotIn("请把客户的补充答复", rendered)

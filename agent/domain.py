@@ -96,6 +96,65 @@ _TALENT_TEXT: dict[str, str] = {
     "主营内容形式": "main_format",
 }
 
+# 顾问界面和代码生成的理由共用同一套中文名，避免各写一套。
+FIELD_LABELS: dict[str, str] = {
+    "mcn": "所属机构",
+    "is_new_kol": "New KOL 标记",
+    "content_type": "内容类型",
+    "tier": "达人层级",
+    "main_format": "主营内容形式",
+    "price_image": "图文参考价",
+    "price_video": "视频参考价",
+    "fans_wan": "粉丝量",
+    "ratio_age_18_24": "18–24 岁粉丝占比",
+    "ratio_age_over_44": "44 岁以上粉丝占比",
+    "ratio_female": "女性粉丝占比",
+    "ctr": "点击率",
+    "cpv": "单次播放成本",
+    "cpe": "单次互动成本",
+    "cpuv": "进店成本",
+    "exposure_med": "曝光中位数",
+    "read_med": "阅读中位数",
+    "interact_med": "互动中位数",
+    "visit_store_med": "进店中位数",
+    "ratio_discover": "发现页阅读占比",
+    "ratio_search": "搜索页阅读占比",
+    "ads_count_90d": "近 90 天合作笔记数",
+}
+
+RATIO_FIELDS = frozenset(
+    {
+        "ratio_age_18_24",
+        "ratio_age_over_44",
+        "ratio_female",
+        "ctr",
+        "ratio_discover",
+        "ratio_search",
+    }
+)
+MONEY_FIELDS = frozenset({"price_image", "price_video"})
+
+
+def format_metric(field: str, value: Any) -> str:
+    """把达人字段格式化成顾问可读的一个值。"""
+    if value is None or value == "":
+        return "缺失"
+    if field in RATIO_FIELDS and isinstance(value, (int, float)):
+        return f"{float(value) * 100:.1f}%"
+    if field in MONEY_FIELDS and isinstance(value, (int, float)):
+        return f"¥{float(value):,.0f}"
+    if field == "fans_wan" and isinstance(value, (int, float)):
+        return f"{float(value):.1f}万"
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number.is_integer():
+            return f"{int(number):,}"
+        text = f"{number:.2f}".rstrip("0").rstrip(".")
+        return text
+    return str(value)
+
 
 @dataclass
 class TalentProfile:

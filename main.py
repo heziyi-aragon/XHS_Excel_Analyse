@@ -7,36 +7,12 @@ from uuid import uuid4
 from langgraph.types import Command
 
 from agent.graph import build_graph
-from agent.domain import PolicyValidationError
+from agent.domain import FIELD_LABELS, PolicyValidationError
+from agent.reasons import BAND_LABELS
 from agent.requirements import LLMServiceError
 
 BASE = Path(__file__).parent
 STATIC = BASE / "static"
-
-FIELD_LABELS = {
-    "mcn": "所属机构",
-    "is_new_kol": "New KOL 标记",
-    "content_type": "内容类型",
-    "tier": "达人层级",
-    "main_format": "主营内容形式",
-    "price_image": "图文参考价",
-    "price_video": "视频参考价",
-    "fans_wan": "粉丝量",
-    "ratio_age_18_24": "18–24 岁粉丝占比",
-    "ratio_age_over_44": "44 岁以上粉丝占比",
-    "ratio_female": "女性粉丝占比",
-    "ctr": "点击率",
-    "cpv": "单次播放成本",
-    "cpe": "单次互动成本",
-    "cpuv": "进店成本",
-    "exposure_med": "曝光中位数",
-    "read_med": "阅读中位数",
-    "interact_med": "互动中位数",
-    "visit_store_med": "进店中位数",
-    "ratio_discover": "发现页阅读占比",
-    "ratio_search": "搜索页阅读占比",
-    "ads_count_90d": "近 90 天合作笔记数",
-}
 
 OPERATOR_LABELS = {
     "eq": "等于",
@@ -156,7 +132,7 @@ def describe_criterion(criterion: dict, index: int) -> str:
 
 def save_result(result: dict) -> Path:
     """保存完整状态，供恢复流程和后续节点读取。"""
-    out = BASE / "output" / "step3_requirements.json"
+    out = BASE / "output" / "step7_recommendations.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     keys = (
         "brief",
@@ -170,6 +146,12 @@ def save_result(result: dict) -> Path:
         "policy_review_feedback",
         "policy_revision_count",
         "approved_policy",
+        "active_policy",
+        "screen_relax_count",
+        "screen_log",
+        "excluded_talents",
+        "deduped_talents",
+        "evaluated_talents",
         "next_step",
         "workflow_status",
     )
@@ -322,6 +304,59 @@ def render_result(result: dict) -> None:
     print(f"\n完整分析已保存至：{out}")
 
 
+def render_shortlist(result: dict) -> None:
+    """打印清洗、筛选、分档和已经写好的推荐理由。"""
+    cleaned = result.get("cleaned_talents") or []
+    missing_count = sum(1 for item in cleaned if item.get("missing_fields"))
+    print_section("清洗结果")
+    print(f"可计算达人 {len(cleaned)} 人，其中 {missing_count} 人有缺失字段。")
+
+    print_section("筛选与去重")
+    relax_count = int(result.get("screen_relax_count") or 0)
+    if relax_count:
+        print(f"数值硬条件放宽了 {relax_count} 次。")
+    logs = result.get("screen_log") or []
+    if logs:
+        for line in logs:
+            print(f"  · {line}")
+    else:
+        print("没有筛选记录。")
+
+    evaluated = result.get("evaluated_talents") or []
+    counts = {}
+    for item in evaluated:
+        band = str(item.get("band") or "")
+        counts[band] = counts.get(band, 0) + 1
+    print_section("分档结果")
+    print(
+        f"明确推荐 {counts.get('clear_yes', 0)} 人，"
+        f"中间档 {counts.get('mid', 0)} 人，"
+        f"明确不推荐 {counts.get('clear_no', 0)} 人。"
+    )
+
+    print_section("推荐名单")
+    if not evaluated:
+        print("没有进入打分的达人。")
+    current_band = None
+    for item in evaluated:
+        band = str(item.get("band") or "")
+        if band != current_band:
+            current_band = band
+            print(f"\n{BAND_LABELS.get(band, band)}")
+        score = item.get("score")
+        score_text = f"{score:.2f}" if isinstance(score, (int, float)) else "无法打分"
+        tag = item.get("tag") or "未写标签"
+        print(f"  · {item.get('nickname') or '未命名'}  {score_text}  {tag}")
+        if item.get("error"):
+            print(f"    这条理由没有生成：{item['error']}")
+        elif item.get("sentence"):
+            print(f"    {item['sentence']}")
+
+    nxt = result.get("next_step") or {}
+    if nxt.get("display_name"):
+        print(f"\n下一步：{nxt['display_name']}。")
+
+
 def get_interrupt_payload(result: dict) -> dict:
     interrupts = result.get("__interrupt__") or []
     if not interrupts:
@@ -381,8 +416,9 @@ def main() -> None:
 
     out = save_result(result)
     print_section("筛选方案审核通过")
-    print("你已同意这套筛选方案，审核结果和完整方案已经保存。")
-    print(f"本轮状态已保存至：{out}")
+    print("你已同意这套筛选方案，并已完成清洗、筛选、打分和中间档理由。")
+    render_shortlist(result)
+    print(f"\n本轮状态已保存至：{out}")
 
 
 def run_cli() -> None:

@@ -34,8 +34,11 @@ def test_load_brief_and_talents() -> None:
 
     talents = TalentLoader(DATA / "蒲公英达人数据_屿光精华.xlsx").load(report)
     assert len(talents) >= 15
-    nicknames = {t.nickname for t in talents}
-    assert "桃桃吃梨" in nicknames
+    by_name = {t.nickname: t for t in talents}
+    assert "桃桃吃梨" in by_name
+    # CPV（元）不应被后面的「前选CPV优于行业top50%」列覆盖
+    assert by_name["桃桃吃梨"].cpv == pytest.approx(0.99)
+    assert by_name["美丽研习社官方号"].cpv == pytest.approx(2.87)
     # 模拟数据里故意埋了整行缺价的达人，loader 应该把它记进问题报告
     assert any("参考价均缺失" in i for i in report.issues)
 

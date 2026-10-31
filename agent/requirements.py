@@ -168,7 +168,7 @@ class RequirementAnalysisAgent:
 - KPI 报告口径、证明材料等若不影响当前筛选，放入 downstream_dependencies；
 - clarification_questions 最多 3 个，必须是本轮无法继续的真正阻断项；没有阻断项就返回空数组；
 - 不得虚构客户已经明确给出的数字，但允许把顾问采用的默认判断写进 consultant_assumptions；
-- hard_requirements 只写达人筛选条件，不要放产品名称、总预算、投放周期或一般内容规范。
+- hard_requirements 只写客户明确规定“必须/仅限/不得低于”的达人硬门槛，不要放产品名称、总预算、投放周期或一般内容规范；需求单中写着“优先”“为主、为辅”的条件（如某垂类优先、新达人优先、图文为主视频为辅）属于排序偏好，必须放入 soft_preferences，不得改写成“不进入候选”放进 hard_requirements。
 - exclusions 已单独列出，hard_requirements 中不要重复同一条排除要求。
 - client_answers 非空时，把它视为客户对上一轮问题的补充；已经回答的问题不得再次追问。
 - 你在本节点看不到达人数据的实际分布，不得声称现有达人与目标人群匹配、数据表现良好或能够完成 KPI。
@@ -304,10 +304,10 @@ _FIELD_DESCRIPTIONS: dict[str, str] = {
     "nickname": "达人昵称",
     "xhs_id": "小红书号",
     "mcn": "所属机构",
-    "is_new_kol": "是否 New KOL",
-    "content_type": "内容类型",
-    "tier": "达人层级",
-    "main_format": "主营内容形式",
+    "is_new_kol": "是否 New KOL（表中取值为 Y 或 N）",
+    "content_type": "内容类型（表中取值为 Beauty、Lifestyle、Fashion、Mother&Baby、Food）",
+    "tier": "达人层级（表中取值为 T1、T2、T3、T4）",
+    "main_format": "主营内容形式（表中取值为 图文为主、视频为主、图文视频均衡、vlog为主）",
     "price_image": "图文参考价（元）",
     "price_video": "视频参考价（元）",
     "fans_wan": "粉丝数（万）",
@@ -339,7 +339,7 @@ class ScreeningPolicyAgent:
 
     SYSTEM_PROMPT = """你是小红书达人投放的筛选策略智能体。
 请将结构化需求转换成机器可执行的筛选条件：
-- 明确的必须满足或排除项设为 hard=true、weight=0；
+- 只有客户明确要求“必须满足”或“明确排除”（如排除纯 vlog 生活号）的条件才设为 hard=true、weight=0；需求单中表述为“优先”“为主、为辅”的垂类偏好（content_type）、新达人偏好（is_new_kol）或图文/视频形式偏好必须设为 hard=false 并分配权重参与打分，不得设为 hard=true 直接淘汰；
 - 影响候选人排序的指标设为 hard=false，并分配正数权重；没有明确阈值时使用 maximize 或 minimize，不得编造阈值；
 - 所有软性条件的权重总和必须等于 1；
 - 不得使用给定字段清单以外的字段；不得臆造需求中没有的阈值；

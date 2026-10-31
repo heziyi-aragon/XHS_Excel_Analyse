@@ -27,19 +27,29 @@ class TalentLoader:
         ws = openpyxl.load_workbook(self.path, data_only=True)[self.sheet_name]
         headers = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
 
-        # 给每一列找到它对应的字段名和解析函数
+        # 给每一列找到它对应的字段名和解析函数；同一字段只绑定最先出现的列，
+        # 并排除「CPV优于行业top50%」这类衍生对比列对 CPV 原值的覆盖。
         col_map: dict[int, tuple[str, object]] = {}
+        bound_fields: set[str] = set()
         for idx, header in enumerate(headers):
             if not header:
                 continue
             for key, (field, parser) in _TALENT_NUMERIC.items():
+                if field in bound_fields:
+                    continue
+                if key == "CPV" and "优于" in header:
+                    continue
                 if key in header:
                     col_map[idx] = (field, parser)
+                    bound_fields.add(field)
                     break
             else:
                 for key, field in _TALENT_TEXT.items():
+                    if field in bound_fields:
+                        continue
                     if key in header:
                         col_map[idx] = (field, None)
+                        bound_fields.add(field)
                         break
                 else:
                     continue  # 认识不了的列跳过，不报错

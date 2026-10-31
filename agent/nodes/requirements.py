@@ -134,14 +134,5 @@ def route_after_policy_review(state: dict[str, Any]) -> str:
 
 
 def prepare_next_step(state: dict[str, Any]) -> dict[str, Any]:
-    """保存后续步骤需要的输入；当前版本在方案获批后结束运行。"""
-    return {
-        "next_step": {
-            "name": "preprocess_table",
-            "display_name": "表格预处理（清洗、标记缺失值）",
-            "status": "interface_ready",
-            "implemented": False,
-            "required_state": ["talents", "approved_policy", "issues"],
-        },
-        "workflow_status": "policy_approved",
-    }
+    """顾问批准后进入清洗。下一步的占位说明由理由汇总节点写成审核核对。"""
+    return {"workflow_status": "policy_approved"}
