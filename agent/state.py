@@ -53,10 +53,28 @@ class GraphState(TypedDict, total=False):
     reason_results: Annotated[list[dict], add]
     evaluated_talents: list[dict]
 
+    # -- 第八步审核：节点逐人处理后整体替换最新结果，不采用并行追加 reducer --
+    # audit_results 只包含中间档的有效 AuditResult；明确档跳过与执行错误另有状态。
+    audit_results: list[dict]
+    audited_talents: list[dict]  # 全名单 + 审核状态；缺数放行或 held_for_review 暂存标记
+    audit_pending: list[dict]   # 中间态为待处理任务；交接时为暂存问题，须随方案带至最终人工审核
+    pricing_candidates: list[dict]  # 原 stance=recommend：正常候选及补数失败标记放行者
+    supplement_results: list[dict]  # 成功/部分查回记录及失败放行记录，含值与来源，供后续人工审核
+    supplement_history: list[dict]  # 每次查回结果与来源、原评估快照；不覆盖旧记录
+    supplement_reassessment_required: bool  # 有新值时经原评估、汇总、再审核
+    audit_context: dict  # 上一轮需求和策略快照；上下文改变时不复用旧审核
+    audit_history: list[dict]  # 实际执行过的中间档审核：当时评估、审核结论及上下文
+    audit_summary: dict  # 覆盖范围与计数，不将理由审校等同于完整业务验收
+    audit_unverified_checks: list[dict]  # 策略人工检查项，无核实证据时保持 unverified，随方案交接
+    manual_review_queue: list[dict]  # 兼容旧交接格式，始终为空；不再产生提前人工业务节点
+
     # -- 后续步骤需要的输入说明 --
     next_step: dict
 
     # needs_client_confirmation / requirements_ready / awaiting_policy_review /
     # policy_revision_requested / policy_approved / screening / scored /
-    # reasons_ready
+    # reasons_ready / audit_rewrite_required / rewriting_reasons / audit_complete /
+    # audit_complete_with_incomplete_data（补数失败标记放行）/
+    # audit_needs_resolution / reevaluating_after_supplement（补数后重新评估）/
+    # audit_complete_with_pending（部分暂存，其余继续）
     workflow_status: str

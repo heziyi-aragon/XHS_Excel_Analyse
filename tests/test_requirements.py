@@ -258,7 +258,10 @@ class RequirementNodeTests(unittest.TestCase):
             [complete_profile(), valid_policy()],
             default=reason_draft(),
         )
-        graph = build_graph(LLMClient(transport=sequence))
+        graph = build_graph(
+            LLMClient(transport=sequence),
+            audit_llm_client=LLMClient(transport=lambda *_: {"verdict": "pass", "issues": []}),
+        )
         config = {"configurable": {"thread_id": "complete-review"}}
         result = graph.invoke(
             {
@@ -276,10 +279,22 @@ class RequirementNodeTests(unittest.TestCase):
             Command(resume={"action": "approve"}),
             config=config,
         )
-        self.assertEqual(completed["workflow_status"], "reasons_ready")
+        self.assertEqual(completed["workflow_status"], "audit_complete_with_incomplete_data")
         self.assertEqual(completed["policy_review_status"], "approved")
         self.assertFalse(completed["next_step"]["implemented"])
-        self.assertEqual(completed["next_step"]["name"], "audit_reasons")
+        self.assertEqual(completed["next_step"]["name"], "build_portfolio")
+        self.assertTrue(completed["audited_talents"])
+        self.assertEqual(completed["audit_pending"], [])
+        self.assertEqual(completed["manual_review_queue"], [])
+        self.assertTrue(all(task["data_incomplete"] for task in completed["supplement_results"]))
+        self.assertEqual(
+            {task["nickname"] for task in completed["supplement_results"]},
+            {"一颗糖Sugar", "凌晨四点的厨房"},
+        )
+        for task in completed["supplement_results"]:
+            self.assertEqual(task["input_check"]["source_path"], str(DATA / "蒲公英达人数据_屿光精华.xlsx"))
+            self.assertEqual(task["input_check"]["status"], "checked")
+            self.assertEqual(task["input_check"]["available_values"], {})
 
         evaluated = completed["evaluated_talents"]
         by_name = {item["nickname"]: item for item in evaluated}
@@ -369,7 +384,8 @@ class RequirementNodeTests(unittest.TestCase):
                     [complete_profile(), valid_policy()],
                     default=reason_draft(),
                 )
-            )
+            ),
+            audit_llm_client=LLMClient(transport=lambda *_: {"verdict": "pass", "issues": []}),
         )
         output = io.StringIO()
         with (
@@ -388,6 +404,9 @@ class RequirementNodeTests(unittest.TestCase):
         self.assertIn("筛选方案审核通过", rendered)
         self.assertIn("推荐名单", rendered)
         self.assertIn("中间档", rendered)
+        self.assertIn("审核结果", rendered)
+        self.assertIn("补数失败，标记放行", rendered)
+        self.assertIn("下一步：投放组合，拟定价格", rendered)
         self.assertNotIn("表格预处理", rendered)
         self.assertNotIn("接口已经预留", rendered)
         self.assertNotIn("请把客户的补充答复", rendered)

@@ -32,6 +32,7 @@ class EvaluationNodes:
                 "attempt": int(state.get("attempt") or 1),
                 "error": str(exc),
                 "source": "model",
+                "data_revision": int(state.get("data_revision") or 0),
             }
         return {"reason_results": [draft]}
 
@@ -40,7 +41,7 @@ def route_reasons(state: dict[str, Any]) -> str | list[Send]:
     """每位中间档达人一条 Send。队列为空时直接去汇总。"""
     profile = state.get("requirement_profile") or {}
     brief = state.get("brief") or {}
-    policy = state.get("approved_policy") or {}
+    policy = state.get("active_policy") or state.get("approved_policy") or {}
     shared = {
         "exclusions": profile.get("exclusions") or [],
         "kpi": profile.get("kpi") or "",
@@ -65,6 +66,8 @@ def route_reasons(state: dict[str, Any]) -> str | list[Send]:
                     "missing_fields": item.get("missing_fields") or [],
                     "talent": item.get("talent") or {},
                     "attempt": attempt,
+                    "data_revision": int(item.get("data_revision") or 0),
+                    "review_feedback": item.get("review_feedback"),
                     **shared,
                 },
             )
@@ -76,9 +79,9 @@ def route_reasons(state: dict[str, Any]) -> str | list[Send]:
 
 def collect_reasons(state: dict[str, Any]) -> dict[str, Any]:
     """明确档沿用代码标签；中间档合并本轮最新的一条模型结果。"""
-    latest: dict[str, dict[str, Any]] = {}
+    latest: dict[tuple[str, int], dict[str, Any]] = {}
     for item in state.get("reason_results") or []:
-        key = person_key(item)
+        key = (person_key(item), int(item.get("data_revision") or 0))
         previous = latest.get(key)
         if previous is None or int(item.get("attempt") or 1) >= int(
             previous.get("attempt") or 1
@@ -89,7 +92,8 @@ def collect_reasons(state: dict[str, Any]) -> dict[str, Any]:
     for record in state.get("scored_talents") or []:
         merged = dict(record)
         if merged.get("band") == BAND_MID:
-            extra = latest.get(person_key(merged))
+            # 补数后指标或评分可能变化，旧数据版本的理由不能覆盖新评分基线。
+            extra = latest.get((person_key(merged), int(merged.get("data_revision") or 0)))
             if extra:
                 for key in (
                     "stance",
@@ -99,6 +103,7 @@ def collect_reasons(state: dict[str, Any]) -> dict[str, Any]:
                     "attempt",
                     "error",
                     "source",
+                    "data_revision",
                 ):
                     if key in extra:
                         merged[key] = extra[key]
@@ -125,11 +130,12 @@ def collect_reasons(state: dict[str, Any]) -> dict[str, Any]:
             "name": "audit_reasons",
             "display_name": "审核核对",
             "status": "interface_ready",
-            "implemented": False,
+            "implemented": True,
             "required_state": [
                 "evaluated_talents",
                 "approved_policy",
                 "requirement_profile",
+                "brief",
             ],
         },
     }

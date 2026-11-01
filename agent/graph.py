@@ -1,11 +1,15 @@
-"""组装前七步工作流，并在客户补充与顾问审批处支持暂停/恢复。"""
+"""组装筛选评估、审核与有上限的理由重写，并在需求阶段支持暂停/恢复。"""
 from __future__ import annotations
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from agent.nodes.audit import AuditNodes
+from agent.nodes.audit_handoff import finalize_audit
 from agent.nodes.evaluation import EvaluationNodes, collect_reasons, route_reasons
 from agent.nodes.load_inputs import load_inputs
+from agent.nodes.rewrite import prepare_reason_rewrites, route_after_audit
+from agent.nodes.supplement import route_after_supplement, supplement_data
 from agent.nodes.requirements import (
     RequirementNodes,
     prepare_next_step,
@@ -23,12 +27,18 @@ from agent.requirements import LLMClient
 from agent.state import GraphState
 
 
-def build_graph(llm_client: LLMClient | None = None, checkpointer=None):
-    """构建工作流；测试可注入假 LLMClient，避免访问真实接口。"""
+def build_graph(
+    llm_client: LLMClient | None = None,
+    checkpointer=None,
+    *,
+    audit_llm_client: LLMClient | None = None,
+):
+    """审核客户端可单独传入；未指定时复用现有配置，原有调用方式继续可用。"""
     g = StateGraph(GraphState)
     llm = llm_client or LLMClient.from_env()
     requirement_nodes = RequirementNodes(llm)
     evaluation_nodes = EvaluationNodes(llm)
+    audit_nodes = AuditNodes(audit_llm_client if audit_llm_client is not None else llm)
 
     g.add_node("load_inputs", load_inputs)
     g.add_node("analyze_requirements", requirement_nodes.analyze_requirements)
@@ -45,6 +55,10 @@ def build_graph(llm_client: LLMClient | None = None, checkpointer=None):
     g.add_node("score_talents", score_talents)
     g.add_node("write_one_reason", evaluation_nodes.write_one_reason)
     g.add_node("collect_reasons", collect_reasons)
+    g.add_node("audit_reasons", audit_nodes.audit_reasons)
+    g.add_node("prepare_reason_rewrites", prepare_reason_rewrites)
+    g.add_node("finalize_audit", finalize_audit)
+    g.add_node("supplement_data", supplement_data)
 
     g.add_edge(START, "load_inputs")
     g.add_edge("load_inputs", "analyze_requirements")
@@ -79,6 +93,13 @@ def build_graph(llm_client: LLMClient | None = None, checkpointer=None):
     g.add_edge("relax_screening", "screen_talents")
     g.add_conditional_edges("score_talents", route_reasons)
     g.add_edge("write_one_reason", "collect_reasons")
-    g.add_edge("collect_reasons", END)
+    g.add_edge("collect_reasons", "audit_reasons")
+    g.add_conditional_edges(
+        "audit_reasons", route_after_audit,
+        {"rewrite": "prepare_reason_rewrites", "supplement": "supplement_data", "finish": "finalize_audit"},
+    )
+    g.add_conditional_edges("prepare_reason_rewrites", route_reasons)
+    g.add_conditional_edges("supplement_data", route_after_supplement)
+    g.add_edge("finalize_audit", END)
 
     return g.compile(checkpointer=checkpointer or InMemorySaver())

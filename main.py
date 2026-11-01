@@ -131,8 +131,9 @@ def describe_criterion(criterion: dict, index: int) -> str:
 
 
 def save_result(result: dict) -> Path:
-    """保存完整状态，供恢复流程和后续节点读取。"""
-    out = BASE / "output" / "step7_recommendations.json"
+    """保存分析及后续交接数据；图暂停恢复仍依赖当前进程的 checkpointer。"""
+    filename = "step8_audit.json" if "audited_talents" in result else "step7_recommendations.json"
+    out = BASE / "output" / filename
     out.parent.mkdir(parents=True, exist_ok=True)
     keys = (
         "brief",
@@ -152,6 +153,18 @@ def save_result(result: dict) -> Path:
         "excluded_talents",
         "deduped_talents",
         "evaluated_talents",
+        "scored_talents",
+        "reason_results",
+        "audit_results",
+        "audit_history",
+        "audit_summary",
+        "audit_unverified_checks",
+        "audited_talents",
+        "audit_pending",
+        "supplement_results",
+        "supplement_history",
+        "manual_review_queue",
+        "pricing_candidates",
         "next_step",
         "workflow_status",
     )
@@ -352,9 +365,88 @@ def render_shortlist(result: dict) -> None:
         elif item.get("sentence"):
             print(f"    {item['sentence']}")
 
+    if "audited_talents" in result:
+        print_section("审核结果")
+        status_labels = {
+            "passed": "理由审核通过",
+            "skipped_clear_band": "明确档由代码给理由，按流程跳过模型理由审校；必要数据检查未发现缺失",
+            "needs_resolution": "存在待处理问题",
+            "execution_error": "审核执行失败",
+        }
+        for item in result["audited_talents"]:
+            label = status_labels.get(item["audit_status"], item["audit_status"])
+            if item.get("release_status") == "flagged_release":
+                label = "数据不全，补数失败后标记放行至投放组合"
+            elif item.get("release_status") == "held_for_review":
+                label = "暂存待复核，暂不参与投放组合"
+            print(f"  · {item.get('nickname')}：第 {item.get('attempt')} 轮评估，{label}")
+            print("    评估倾向：" + {"recommend": "推荐", "reject": "不推荐"}.get(item.get("stance"), "未确定"))
+            prior = [entry for entry in result.get("audit_history") or []
+                     if (entry["assessment"].get("xhs_id") or entry["assessment"].get("nickname")) ==
+                        (item.get("xhs_id") or item.get("nickname"))
+                     and entry["result"]["verdict"] == "reject"]
+            for entry in prior:
+                print(f"    历史：第 {entry['assessment']['attempt']} 轮被打回：" +
+                      "；".join(issue["message"] for issue in entry["result"]["issues"]))
+            for issue in item.get("audit_issues") or []:
+                print(f"    {issue['message']}")
+            if item.get("audit_error"):
+                print(f"    {item['audit_error']['message']}")
+        supplements = result.get("supplement_results") or []
+        recovered = [task for task in supplements if task["status"] in ("success", "partial")]
+        if recovered:
+            print("\n已查回的缺失字段（重新评估状态以最新审核为准）：")
+            for task in recovered:
+                fields = "、".join(FIELD_LABELS.get(name, name) for name in task["values"])
+                print(f"  · {task.get('nickname')}：{fields}，来源 {task['input_check']['source_path']}")
+        failures = [task for task in supplements if task["status"] == "failed"]
+        if failures:
+            print("\n补数失败，标记放行：")
+            for task in failures:
+                fields = "、".join(FIELD_LABELS.get(name, name) for name in task["fields"])
+                print(f"  · {task.get('nickname')}：数据不全（{fields}）")
+                print(f"    {task['message']}")
+        actions = {
+            "supplement_data": "补充数据",
+            "rewrite_reason": "重新评估并写理由",
+            "rewrite_limit_reached": "自动重写已到上限，暂存待复核",
+            "restore_input_data": "恢复原输入与评估数据的一致性",
+            "review_supplement_data": "补回数据与执行条件冲突，暂存复核",
+            "retry_audit": "重新执行审核",
+        }
+        pending = result.get("audit_pending") or []
+        if pending:
+            print("\n暂存待复核记录（其余候选继续）：" if result.get("workflow_status") == "audit_complete_with_pending" else "\n待处理任务：")
+            for task in pending:
+                fields = "、".join(FIELD_LABELS.get(name, name) for name in task["fields"])
+                detail = f"（{fields}）" if fields else ""
+                print(f"  · {task.get('nickname')}：{actions[task['action']]}{detail}")
+                if task.get("message"):
+                    print(f"    {task['message']}")
+                if task.get("input_check", {}).get("available_values"):
+                    print("    原始输入中已存在的值：")
+                    for field, value in task["input_check"]["available_values"].items():
+                        print(f"      {FIELD_LABELS.get(field, field)}：{value}")
+        candidates = result.get("pricing_candidates") or []
+        flagged_count = sum(row.get("release_status") == "flagged_release" for row in candidates)
+        from agent.audit_reporting import audit_report_fields
+        coverage = audit_report_fields(result)
+        summary = coverage["audit_summary"]
+        print(f"\n交给投放组合的推荐候选 {len(candidates)} 人（含数据不全标记放行 {flagged_count} 人），已处理不推荐 {summary['rejected_count']} 人，其他待处理 {len(pending)} 人。")
+        print(f"审核范围：进入审核 {summary['entered_count']} 人，完成模型理由审校 {summary['model_reviewed_count']} 人，明确档跳过模型理由审校 {summary['skipped_reason_review_count']} 人。")
+        checks = coverage["audit_unverified_checks"]
+        if checks:
+            print("策略中尚无核实证据的检查项（不能因待处理任务为空就视为已完成）：")
+            for check in checks:
+                print("  · 未核实：" + check["description"])
+        if summary["policy_changed_after_approval"]:
+            print("实际执行策略与获批策略不同；理由审校通过不代表已确认策略变更符合客户要求。")
+
     nxt = result.get("next_step") or {}
     if nxt.get("display_name"):
         print(f"\n下一步：{nxt['display_name']}。")
+    if nxt.get("message"):
+        print(nxt["message"])
 
 
 def get_interrupt_payload(result: dict) -> dict:
@@ -367,7 +459,8 @@ def get_interrupt_payload(result: dict) -> dict:
 
 def main() -> None:
     graph = build_graph()
-    config = {"configurable": {"thread_id": f"cli-{uuid4()}"}}
+    # 图执行步数包含筛选放宽、重写与补数；它不同于单人的两轮评估上限。
+    config = {"configurable": {"thread_id": f"cli-{uuid4()}"}, "recursion_limit": 64}
     result = graph.invoke(
         {
             "brief_path": str(STATIC / "甲方投放需求单_屿光精华.xlsx"),
@@ -416,7 +509,10 @@ def main() -> None:
 
     out = save_result(result)
     print_section("筛选方案审核通过")
-    print("你已同意这套筛选方案，并已完成清洗、筛选、打分和中间档理由。")
+    if result.get("workflow_status") == "audit_complete_with_pending":
+        print("你已同意筛选方案，已完成本轮审核与可执行的自动重写；未解决的单条记录已暂存，可用候选继续交给投放组合。")
+    else:
+        print("你已同意这套筛选方案，并已完成清洗、筛选、打分、理由审核及可执行的自动重写。")
     render_shortlist(result)
     print(f"\n本轮状态已保存至：{out}")
 
