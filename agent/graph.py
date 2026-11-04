@@ -1,4 +1,4 @@
-"""组装筛选评估、审核与有上限的理由重写，并在需求阶段支持暂停/恢复。"""
+"""组装筛选、审核与组合定价，并在需求阶段支持暂停/恢复。"""
 from __future__ import annotations
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -8,6 +8,7 @@ from agent.nodes.audit import AuditNodes
 from agent.nodes.audit_handoff import finalize_audit
 from agent.nodes.evaluation import EvaluationNodes, collect_reasons, route_reasons
 from agent.nodes.load_inputs import load_inputs
+from agent.nodes.portfolio import make_portfolio_handoff_node
 from agent.nodes.rewrite import prepare_reason_rewrites, route_after_audit
 from agent.nodes.supplement import route_after_supplement, supplement_data
 from agent.nodes.requirements import (
@@ -32,8 +33,10 @@ def build_graph(
     checkpointer=None,
     *,
     audit_llm_client: LLMClient | None = None,
+    enable_portfolio: bool = True,
+    portfolio_llm_client: LLMClient | None = None,
 ):
-    """审核客户端可单独传入；未指定时复用现有配置，原有调用方式继续可用。"""
+    """默认继续组合；审核可独立运行，组合说明模型仅在显式注入时调用。"""
     g = StateGraph(GraphState)
     llm = llm_client or LLMClient.from_env()
     requirement_nodes = RequirementNodes(llm)
@@ -59,6 +62,8 @@ def build_graph(
     g.add_node("prepare_reason_rewrites", prepare_reason_rewrites)
     g.add_node("finalize_audit", finalize_audit)
     g.add_node("supplement_data", supplement_data)
+    if enable_portfolio:
+        g.add_node("build_portfolio", make_portfolio_handoff_node(portfolio_llm_client))
 
     g.add_edge(START, "load_inputs")
     g.add_edge("load_inputs", "analyze_requirements")
@@ -100,6 +105,10 @@ def build_graph(
     )
     g.add_conditional_edges("prepare_reason_rewrites", route_reasons)
     g.add_conditional_edges("supplement_data", route_after_supplement)
-    g.add_edge("finalize_audit", END)
+    if enable_portfolio:
+        g.add_edge("finalize_audit", "build_portfolio")
+        g.add_edge("build_portfolio", END)
+    else:
+        g.add_edge("finalize_audit", END)
 
     return g.compile(checkpointer=checkpointer or InMemorySaver())

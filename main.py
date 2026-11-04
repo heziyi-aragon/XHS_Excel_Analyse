@@ -132,7 +132,9 @@ def describe_criterion(criterion: dict, index: int) -> str:
 
 def save_result(result: dict) -> Path:
     """保存分析及后续交接数据；图暂停恢复仍依赖当前进程的 checkpointer。"""
-    filename = "step8_audit.json" if "audited_talents" in result else "step7_recommendations.json"
+    has_portfolio = isinstance(result.get("portfolio_plan"), dict) or bool(result.get("portfolio_error"))
+    filename = ("step9_portfolio.json" if has_portfolio else
+                "step8_audit.json" if "audited_talents" in result else "step7_recommendations.json")
     out = BASE / "output" / filename
     out.parent.mkdir(parents=True, exist_ok=True)
     keys = (
@@ -168,6 +170,9 @@ def save_result(result: dict) -> Path:
         "next_step",
         "workflow_status",
     )
+    if has_portfolio:
+        keys += ("portfolio_plan", "portfolio_config", "portfolio_feedback", "portfolio_error",
+                 "audit_workflow_status", "audit_next_step")
     out.write_text(
         json.dumps(
             {key: result.get(key) for key in keys},
@@ -416,7 +421,8 @@ def render_shortlist(result: dict) -> None:
         }
         pending = result.get("audit_pending") or []
         if pending:
-            print("\n暂存待复核记录（其余候选继续）：" if result.get("workflow_status") == "audit_complete_with_pending" else "\n待处理任务：")
+            audit_status = result.get("audit_workflow_status") or result.get("workflow_status")
+            print("\n暂存待复核记录（其余候选继续）：" if audit_status == "audit_complete_with_pending" else "\n待处理任务：")
             for task in pending:
                 fields = "、".join(FIELD_LABELS.get(name, name) for name in task["fields"])
                 detail = f"（{fields}）" if fields else ""
@@ -442,11 +448,60 @@ def render_shortlist(result: dict) -> None:
         if summary["policy_changed_after_approval"]:
             print("实际执行策略与获批策略不同；理由审校通过不代表已确认策略变更符合客户要求。")
 
+    render_portfolio(result)
     nxt = result.get("next_step") or {}
     if nxt.get("display_name"):
         print(f"\n下一步：{nxt['display_name']}。")
     if nxt.get("message"):
         print(nxt["message"])
+
+
+def render_portfolio(result: dict) -> None:
+    """展示方案草案；预算可行不等于客户KPI或最终人工审核通过。"""
+    error = result.get("portfolio_error")
+    if error:
+        print_section("组合输入待完善")
+        print(error["message"])
+        print("已保留完成的审核结果，尚未生成可执行报价方案。")
+        return
+    plan = result.get("portfolio_plan")
+    if not isinstance(plan, dict):
+        return
+    print_section("投放组合与建议价格")
+    print("以下为待最终人工审核的草案，报价尚未成交，历史效果仅用于估算。")
+    budget = plan["budget"]
+    print(f"预算上限 ¥{budget['limit']:,.2f}；建议总价 ¥{budget['total_suggested']:,.2f}；"
+          f"区间上限合计 ¥{budget['total_upper']:,.2f}。")
+    if not plan["lines"]:
+        print("当前没有可执行的已定价组合。")
+    for row in plan["lines"]:
+        form = "图文" if row["format"] == "image" else "视频"
+        print(f"  · {row.get('nickname') or row['creator_key']}：{form} {row['quantity']} 篇，"
+              f"建议单价 ¥{row['unit_price_suggested']:,.2f}，"
+              f"区间 ¥{row['unit_price_low']:,.2f}–¥{row['unit_price_high']:,.2f}，"
+              f"建议小计 ¥{row['line_cost_suggested']:,.2f}。")
+        if row.get("risk_flags", {}).get("data_incomplete"):
+            print("    保留上游数据不全标记，缺项须随方案交给最终人工审核。")
+    labels = {"exposure": "曝光", "interactions": "互动", "cpe": "整体CPE（上限费用口径）",
+              "brand_search_lift": "品牌词搜索提升"}
+    statuses = {"proxy_met": "估算满足，实际交付未验证", "proxy_unmet": "估算未满足",
+                "not_evaluable": "现有数据无法评估", "not_set": "尚未给定可计算目标"}
+    for key, check in plan["kpi_checks"].items():
+        def display(value):
+            if value is None:
+                return "未知"
+            return f"{value:.1%}" if key == "brand_search_lift" else f"{value:,.2f}".rstrip("0").rstrip(".")
+        print(f"  · {labels[key]}：目标 {display(check['target'])}，估算 {display(check['estimate'])}，"
+              f"{statuses[check['status']]}。")
+        if check.get("gap"):
+            print(f"    与目标的缺口：{display(check['gap'])}。")
+    if plan["conditional_candidates"]:
+        print(f"另有 {len(plan['conditional_candidates'])} 位达人待核价，未按零成本计入组合。")
+    if plan["solver_status"] == "limit_reached":
+        print("搜索达到本轮计算上限，目前方案尚未证明最优。")
+    if plan.get("pricing_policy", {}).get("requires_exception_approval"):
+        print("存在平台参考价±20%以外的报价，须复核例外理由。")
+    print("每达人默认1篇属于可修改的方案假设；缺行业报价基准及品牌搜索基线，相关事项仍待核实。")
 
 
 def get_interrupt_payload(result: dict) -> dict:
@@ -508,9 +563,10 @@ def main() -> None:
         raise RuntimeError(f"无法识别的人工确认类型：{interrupt_type}")
 
     out = save_result(result)
-    print_section("筛选方案审核通过")
-    if result.get("workflow_status") == "audit_complete_with_pending":
-        print("你已同意筛选方案，已完成本轮审核与可执行的自动重写；未解决的单条记录已暂存，可用候选继续交给投放组合。")
+    print_section("筛选与投放组合结果" if result.get("portfolio_plan") or result.get("portfolio_error") else "筛选方案审核通过")
+    audit_status = result.get("audit_workflow_status") or result.get("workflow_status")
+    if audit_status == "audit_complete_with_pending":
+        print("你已同意筛选方案，已完成本轮审核与可执行的自动重写；未解决的单条记录已暂存，组合结果和剩余问题见下方。")
     else:
         print("你已同意这套筛选方案，并已完成清洗、筛选、打分、理由审核及可执行的自动重写。")
     render_shortlist(result)

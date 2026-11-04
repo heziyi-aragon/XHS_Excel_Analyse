@@ -208,10 +208,12 @@ def test_full_graph_can_reuse_one_client_while_keeping_audit_requests_separate()
     mid_names = {row["nickname"] for row in result["evaluated_talents"] if row["band"] == "mid"}
     assert audit_names and set(audit_names).issubset(mid_names)
     assert len(result["audited_talents"]) == len(result["evaluated_talents"])
-    assert result["workflow_status"] == "audit_complete_with_incomplete_data"
+    assert result["audit_workflow_status"] == "audit_complete_with_incomplete_data"
+    assert result["workflow_status"] == "portfolio_" + result["portfolio_plan"]["status"]
     assert result["manual_review_queue"] == result["audit_pending"] == []
     assert result["supplement_results"]
-    assert result["next_step"]["name"] == "build_portfolio"
+    assert result["next_step"]["name"] == "write_suggestions"
+    assert result["audit_next_step"]["name"] == "build_portfolio"
     flagged_recommendations = {
         row["nickname"] for row in result["audited_talents"]
         if row.get("data_incomplete") and row["stance"] == "recommend"
