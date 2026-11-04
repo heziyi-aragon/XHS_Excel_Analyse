@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.portfolio import build_portfolio_plan
+from agent.portfolio import PortfolioPlanningError, build_portfolio_plan
 
 
 def _record(identity="kol-1", *, price_image=100, price_video=None,
@@ -392,13 +392,15 @@ def test_a_malicious_llm_cannot_raise_the_budget_add_creators_or_supply_effect_v
     client = MaliciousLLM()
     state = _state([_record("real", price_image=100)], budget=150)
     original = deepcopy(state)
-    plan = build_portfolio_plan(state, _targets(exposure=10000), llm_client=client)
+    with pytest.raises(PortfolioPlanningError) as rejected:
+        build_portfolio_plan(state, _targets(exposure=10000), llm_client=client)
     assert client.calls >= 1
-    assert plan["budget"]["limit"] == 150
-    assert plan["budget"]["total_upper"] <= 150
-    assert {line["xhs_id"] for line in plan["lines"]} <= {"real"}
-    assert plan["kpi_checks"]["exposure"]["estimate"] <= 1000
-    assert plan["kpi_checks"]["exposure"]["status"] == "proxy_unmet"
+    assert rejected.value.planning["status"] == "needs_clarification"
+    assert rejected.value.planning["pending"]
+    assert state["brief"]["total_budget"] == 150
+    assert {row["xhs_id"] for row in state["pricing_candidates"]} == {"real"}
+    assert state["pricing_candidates"][0]["talent"]["price_image"] == 100
+    assert "portfolio_plan" not in state
     assert state == original
 
 

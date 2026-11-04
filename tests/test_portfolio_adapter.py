@@ -156,10 +156,12 @@ def test_cli_previous_inherits_prior_configuration_when_no_new_config_is_supplie
     source = _write_source(tmp_path)
     previous_path, output = tmp_path / "v1.json", tmp_path / "v2.json"
     config = {"price_multiplier": 0.9, "max_posts_per_creator": 2, "max_search_nodes": 50}
-    run(source, previous_path, config=config)
+    previous = run(source, previous_path, config=config)
     assert _run_main(monkeypatch, source, "--previous", previous_path, "--output", output) == 0
     result = read_json(output)
-    assert result["portfolio_config"] == config
+    assert result["portfolio_config"] == previous["portfolio_plan"]["configuration"]
+    for key, value in config.items():
+        assert result["portfolio_config"][key] == value
     assert result["portfolio_plan"]["pricing_policy"]["price_multiplier"] == 0.9
     assert result["portfolio_plan"]["post_caps"]["default"] == 2
     assert result["portfolio_plan"]["max_search_nodes"] == 50

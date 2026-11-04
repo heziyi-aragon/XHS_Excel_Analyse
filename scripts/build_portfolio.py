@@ -16,6 +16,17 @@ def read_json(path: Path) -> dict:
     return value
 
 
+def load_portfolio_state(payload: dict) -> dict:
+    """Accept either the main graph's flat state or the standalone JSON envelope."""
+    if isinstance(payload.get('upstream_state'), dict):
+        state = deepcopy(payload['upstream_state'])
+        if isinstance(payload.get('portfolio_plan'), dict):
+            state['portfolio_plan'] = deepcopy(payload['portfolio_plan'])
+            state['portfolio_config'] = deepcopy(payload['portfolio_plan'].get('node_configuration') or {})
+        return state
+    return deepcopy(payload)
+
+
 def report_markdown(plan: dict) -> str:
     budget = plan['budget']
     rows = ['# 投放组合与建议定价', '',
@@ -45,7 +56,8 @@ def report_markdown(plan: dict) -> str:
 
 
 def run(input_path: Path, output_path: Path, *, config: dict | None = None,
-        feedback=None, llm_client=None, report_path: Path | None = None) -> dict:
+        feedback=None, llm_client=None, report_path: Path | None = None,
+        previous_path: Path | None = None) -> dict:
     if input_path.resolve() == output_path.resolve():
         raise ValueError('Step-9 output must not overwrite the step-8 input')
     if report_path is not None and report_path.resolve() in {input_path.resolve(), output_path.resolve()}:
@@ -53,11 +65,15 @@ def run(input_path: Path, output_path: Path, *, config: dict | None = None,
     if output_path.exists() or (report_path is not None and report_path.exists()):
         raise ValueError('Output already exists; choose a new output name for this revision')
     source = read_json(input_path)
-    state = deepcopy(source)
-    if config is not None:
-        state['portfolio_config'] = config
-    if feedback is not None:
-        state['portfolio_feedback'] = feedback
+    state = load_portfolio_state(source)
+    if previous_path is not None:
+        previous = read_json(previous_path).get('portfolio_plan')
+        if not isinstance(previous, dict):
+            raise ValueError('Previous result has no portfolio_plan')
+        state['portfolio_plan'] = deepcopy(previous)
+        state['portfolio_config'] = deepcopy(previous.get('node_configuration') or {})
+    state['portfolio_config_patch'] = config
+    state['portfolio_feedback'] = feedback
     update = make_portfolio_node(llm_client)(state)
     # Use a new envelope: the exact upstream payload is evidence, never a mutable plan.
     result = {'upstream_state': source,
@@ -78,47 +94,28 @@ def main() -> int:
     parser.add_argument('--feedback', type=Path, help='JSON with config_overrides and/or comments')
     parser.add_argument('--previous', type=Path, help='Previous step-9 envelope, to increment only the portfolio revision')
     parser.add_argument('--report', type=Path)
+    parser.add_argument('--benchmarks', type=Path, help='Sourced industry observations (JSON list or observations object)')
+    parser.add_argument('--pricing-as-of', help='Explicit ISO date for benchmark freshness checks')
     parser.add_argument('--llm', action='store_true', help='Explicitly enable optional model annotation with existing .env')
     args = parser.parse_args()
     try:
         config = read_json(args.config) if args.config else None
+        if args.benchmarks:
+            observations = json.loads(args.benchmarks.read_text(encoding='utf-8-sig'))
+            if isinstance(observations, dict):
+                observations = observations.get('observations')
+            if not isinstance(observations, list):
+                raise ValueError('Benchmark file must be a list or contain observations')
+            config = {**(config or {}), 'industry_benchmarks': observations}
+        if args.pricing_as_of:
+            config = {**(config or {}), 'pricing_as_of': args.pricing_as_of}
         feedback = read_json(args.feedback) if args.feedback else None
         client = None
         if args.llm:
             from agent.requirements import LLMClient
             client = LLMClient.from_env()
-        if args.previous:
-            # Preserve the step-8 source file by using an in-memory previous-plan field.
-            previous_envelope = read_json(args.previous)
-            previous = previous_envelope.get('portfolio_plan')
-            if not isinstance(previous, dict):
-                raise ValueError('Previous result has no portfolio_plan')
-            inherited = deepcopy(previous.get('configuration') or previous_envelope.get('portfolio_config') or {})
-            if config is not None:
-                inherited.update(config)
-            config = inherited
-            source = read_json(args.input)
-            source['portfolio_plan'] = previous
-            if args.input.resolve() == args.output.resolve() or args.output.exists() or (args.report and args.report.exists()):
-                raise ValueError('Choose new output paths; existing inputs and results are preserved')
-            if args.report and args.report.resolve() in {args.input.resolve(), args.output.resolve()}:
-                raise ValueError('Input, JSON output, and Markdown report must use different paths')
-            state = deepcopy(source)
-            if config is not None:
-                state['portfolio_config'] = config
-            if feedback is not None:
-                state['portfolio_feedback'] = feedback
-            update = make_portfolio_node(client)(state)
-            result = {'upstream_state': read_json(args.input),
-                      'portfolio_config': update['portfolio_plan'].get('configuration', config or {}), **update}
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
-            if args.report:
-                args.report.parent.mkdir(parents=True, exist_ok=True)
-                args.report.write_text(report_markdown(result['portfolio_plan']), encoding='utf-8')
-        else:
-            result = run(args.input, args.output, config=config, feedback=feedback,
-                         llm_client=client, report_path=args.report)
+        result = run(args.input, args.output, config=config, feedback=feedback,
+                     llm_client=client, report_path=args.report, previous_path=args.previous)
         plan = result['portfolio_plan']
         print(f"Saved {args.output}; status={plan['status']}; solver={plan['solver_status']}; upper_cost={plan['budget']['total_upper']:.2f}")
     except (ValueError, OSError, json.JSONDecodeError) as error:

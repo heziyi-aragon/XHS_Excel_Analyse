@@ -72,7 +72,12 @@ class GraphState(TypedDict, total=False):
     portfolio_plan: dict | None
     portfolio_config: dict
     portfolio_feedback: dict | str | None
+    portfolio_config_patch: dict | None
     portfolio_error: dict | None
+    portfolio_previous_plan: dict | None
+    portfolio_review: dict
+    portfolio_review_status: str
+    portfolio_review_history: list[dict]
     audit_workflow_status: str
     audit_next_step: dict
 

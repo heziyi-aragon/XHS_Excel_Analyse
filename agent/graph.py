@@ -9,6 +9,7 @@ from agent.nodes.audit_handoff import finalize_audit
 from agent.nodes.evaluation import EvaluationNodes, collect_reasons, route_reasons
 from agent.nodes.load_inputs import load_inputs
 from agent.nodes.portfolio import make_portfolio_handoff_node
+from agent.nodes.portfolio_review import attach_review_loop
 from agent.nodes.rewrite import prepare_reason_rewrites, route_after_audit
 from agent.nodes.supplement import route_after_supplement, supplement_data
 from agent.nodes.requirements import (
@@ -35,6 +36,8 @@ def build_graph(
     audit_llm_client: LLMClient | None = None,
     enable_portfolio: bool = True,
     portfolio_llm_client: LLMClient | None = None,
+    portfolio_review_node=None,
+    max_portfolio_revisions: int = 3,
 ):
     """默认继续组合；审核可独立运行，组合说明模型仅在显式注入时调用。"""
     g = StateGraph(GraphState)
@@ -107,7 +110,10 @@ def build_graph(
     g.add_conditional_edges("supplement_data", route_after_supplement)
     if enable_portfolio:
         g.add_edge("finalize_audit", "build_portfolio")
-        g.add_edge("build_portfolio", END)
+        if portfolio_review_node is not None:
+            attach_review_loop(g, review_node=portfolio_review_node, max_revisions=max_portfolio_revisions)
+        else:
+            g.add_edge("build_portfolio", END)
     else:
         g.add_edge("finalize_audit", END)
 

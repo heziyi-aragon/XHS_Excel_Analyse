@@ -23,13 +23,15 @@ _AUDIT_FIELDS = (
 
 
 def _run_graph(*, enabled=True, portfolio_config=None, feedback=None, annotation_client=None,
-               client_answers=None):
+               client_answers=None, review_node=None):
     sequence = ResponseSequence([complete_profile(), valid_policy()], default=reason_draft())
     kwargs = {"audit_llm_client": LLMClient(transport=lambda *_: {"verdict": "pass", "issues": []})}
     if not enabled:
         kwargs["enable_portfolio"] = False
     if annotation_client is not None:
         kwargs["portfolio_llm_client"] = annotation_client
+    if review_node is not None:
+        kwargs["portfolio_review_node"] = review_node
     graph = build_graph(LLMClient(transport=sequence), **kwargs)
     invocation = {"configurable": {"thread_id": "portfolio-integration-" + uuid4().hex}, "recursion_limit": 64}
     initial_state = {
@@ -117,15 +119,13 @@ def test_optional_portfolio_client_is_explicit_and_cannot_change_the_numeric_pla
 
     def annotate(_system, payload):
         calls.append(deepcopy(payload))
-        return {
-            "constraints": [{"text": "按平台参考价上下20%给出区间", "source_quote": "达人报价以平台参考价为基准上下浮动20%以内"}],
-            "explanation": "仅解释已计算方案，仍需最终人工审核。",
-        }
+        return {"proposals": []}
 
     _, original, _, _ = graph_modes
     result, _ = _run_graph(annotation_client=LLMClient(transport=annotate))
-    assert len(calls) == 1 and "proposal" in calls[0]
+    assert len(calls) == 1 and "sources" in calls[0] and "candidate_aliases" in calls[0]
     assert result["portfolio_plan"]["llm_annotations"]["status"] == "generated_for_review"
+    assert result["portfolio_plan"]["llm_annotations"]["execution_phase"] == "before_solver"
     for field in ("lines", "budget", "kpi_checks", "upstream_risks"):
         assert result["portfolio_plan"][field] == original["portfolio_plan"][field]
 
@@ -187,13 +187,15 @@ def test_a_main_graph_input_error_still_returns_complete_audit_results():
     assert result["audit_next_step"]["name"] == "build_portfolio"
 
 
-def test_a_revised_client_budget_cannot_be_silently_replaced_by_the_old_brief_number():
+def test_a_clear_customer_budget_revision_is_automatically_applied_with_its_source():
     result, _ = _run_graph(client_answers="本轮总预算调整为100元，其他要求不变。")
     assert result["brief"]["total_budget"] == 350000
-    assert result["workflow_status"] == "portfolio_needs_input"
-    assert result["portfolio_plan"] is None
-    assert result["portfolio_error"]["type"] == "input_validation"
-    assert "budget" in result["portfolio_error"]["message"]
+    assert result["portfolio_error"] is None
+    plan = result["portfolio_plan"]
+    assert result["workflow_status"] == "portfolio_" + plan["status"]
+    assert plan["budget"]["limit"] == 100
+    assert plan["budget"]["total_upper"] <= 100
+    assert "client_answers" in plan["budget"]["source"]
     assert result["audited_talents"] and result["pricing_candidates"]
     assert result["audit_next_step"]["name"] == "build_portfolio"
 
@@ -284,3 +286,23 @@ def test_cli_reports_input_error_while_preserving_audit_and_risk_display(capsys,
     assert "price_multiplier" in output or "输入" in output or "参数" in output
     assert "未核实" in output
     assert "人工审核已通过" not in output
+
+
+def test_shared_main_graph_can_use_the_downstream_return_hook_without_rerunning_upstream(graph_modes):
+    seen = []
+
+    def review(state):
+        seen.append(state["portfolio_plan"]["revision"])
+        return ({"action": "revise", "review_id": "discount", "feedback": "九折"}
+                if len(seen) == 1 else {"action": "continue"})
+
+    audit, _, baseline_calls, _ = graph_modes
+    result, sequence = _run_graph(review_node=review)
+    assert seen == [1, 2]
+    assert result["portfolio_plan"]["revision"] == 2
+    assert result["portfolio_plan"]["pricing_policy"]["price_multiplier"] == 0.9
+    assert result["portfolio_review_status"] == "accepted_for_handoff"
+    assert result["portfolio_plan"]["approval_status"] == "pending_final_human_review"
+    assert sequence.calls == baseline_calls.calls
+    for field in _AUDIT_FIELDS:
+        assert result.get(field) == audit.get(field), field

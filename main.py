@@ -9,7 +9,7 @@ from langgraph.types import Command
 from agent.graph import build_graph
 from agent.domain import FIELD_LABELS, PolicyValidationError
 from agent.reasons import BAND_LABELS
-from agent.requirements import LLMServiceError
+from agent.requirements import LLMClient, LLMServiceError
 
 BASE = Path(__file__).parent
 STATIC = BASE / "static"
@@ -172,7 +172,8 @@ def save_result(result: dict) -> Path:
     )
     if has_portfolio:
         keys += ("portfolio_plan", "portfolio_config", "portfolio_feedback", "portfolio_error",
-                 "audit_workflow_status", "audit_next_step")
+                 "portfolio_config_patch", "portfolio_previous_plan", "portfolio_review",
+                 "portfolio_review_status", "portfolio_review_history", "audit_workflow_status", "audit_next_step")
     out.write_text(
         json.dumps(
             {key: result.get(key) for key in keys},
@@ -462,7 +463,7 @@ def render_portfolio(result: dict) -> None:
     if error:
         print_section("组合输入待完善")
         print(error["message"])
-        print("已保留完成的审核结果，尚未生成可执行报价方案。")
+        print("本轮未生成新报价；已保留完成的审核结果及上一次有效报价（如有）。")
         return
     plan = result.get("portfolio_plan")
     if not isinstance(plan, dict):
@@ -482,6 +483,13 @@ def render_portfolio(result: dict) -> None:
               f"建议小计 ¥{row['line_cost_suggested']:,.2f}。")
         if row.get("risk_flags", {}).get("data_incomplete"):
             print("    保留上游数据不全标记，缺项须随方案交给最终人工审核。")
+        valuation = row.get("valuation") or {}
+        if valuation:
+            label = {'industry_reference': '有来源行业基准', 'industry_fixture': '模拟行业测试基准',
+                     'sample_peer_reference': '输入表内同行参考', 'platform_fallback': '仅平台参考价'}.get(valuation.get('status'), '待核价')
+            print(f"    定价依据：{label}。")
+            if valuation.get('conflict'):
+                print('    基准价与平台默认走廊存在冲突，须复核后议价。')
     labels = {"exposure": "曝光", "interactions": "互动", "cpe": "整体CPE（上限费用口径）",
               "brand_search_lift": "品牌词搜索提升"}
     statuses = {"proxy_met": "估算满足，实际交付未验证", "proxy_unmet": "估算未满足",
@@ -501,7 +509,7 @@ def render_portfolio(result: dict) -> None:
         print("搜索达到本轮计算上限，目前方案尚未证明最优。")
     if plan.get("pricing_policy", {}).get("requires_exception_approval"):
         print("存在平台参考价±20%以外的报价，须复核例外理由。")
-    print("每达人默认1篇属于可修改的方案假设；缺行业报价基准及品牌搜索基线，相关事项仍待核实。")
+    print("每达人默认1篇属于可修改的方案假设；表内同行价不代表真实市场行情，品牌搜索提升仍需基线。")
 
 
 def get_interrupt_payload(result: dict) -> dict:
@@ -513,7 +521,7 @@ def get_interrupt_payload(result: dict) -> dict:
 
 
 def main() -> None:
-    graph = build_graph()
+    graph = build_graph(portfolio_llm_client=LLMClient.from_env())
     # 图执行步数包含筛选放宽、重写与补数；它不同于单人的两轮评估上限。
     config = {"configurable": {"thread_id": f"cli-{uuid4()}"}, "recursion_limit": 64}
     result = graph.invoke(
