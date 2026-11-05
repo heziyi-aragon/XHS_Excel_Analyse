@@ -44,8 +44,23 @@ _OVERRIDE_NAMES = frozenset({'price_multiplier', 'exception_reason',
 class PortfolioPlanningError(ValueError):
     def __init__(self, planning: dict):
         self.planning = planning
-        super().__init__('报价修改尚不能执行，请明确以下要求：' +
-                         '; '.join(str(item) for item in planning.get('pending') or []))
+        reasons = {
+            'brief_budget_conflict': '需求单预算原文与已读取金额不一致，请核对总预算',
+            'conflicting_values_in_same_source': '同一份要求中有不同数值，请确认采用哪一个',
+            'customer_confirmation_required': '这项修改会放宽甲方预算或效果要求，需要客户确认',
+            'unsupported_hard_portfolio_constraint': '这项硬性组合要求暂不能自动执行，请提供可执行配置或确认方案',
+            'request_has_no_supported_executable_value': '请明确具体折扣、篇数或内容形式，例如“九折”或“每人最多2篇”',
+        }
+        labels = {'brief': '需求单', 'client_answers': '客户补答', 'feedback': '报价反馈'}
+        details = []
+        for item in planning.get('pending') or []:
+            label = labels.get(item.get('source_kind'), '报价规划')
+            quote = str(item.get('text') or '').strip()
+            reason = reasons.get(item.get('reason'), '这项要求需要复核后再计算')
+            detail = f'{label}“{quote[:160]}”：{reason}' if quote else f'{label}：{reason}'
+            if detail not in details:
+                details.append(detail)
+        super().__init__('报价规划需要确认：' + '；'.join(details or ['请明确本轮的组合或改价要求']))
 
 
 def _number(value: Any) -> Decimal | None:

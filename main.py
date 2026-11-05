@@ -461,15 +461,21 @@ def render_portfolio(result: dict) -> None:
     """展示方案草案；预算可行不等于客户KPI或最终人工审核通过。"""
     error = result.get("portfolio_error")
     if error:
-        print_section("组合输入待完善")
+        print_section("报价规划需要确认" if error.get("type") == "needs_clarification" else "组合输入待完善")
         print(error["message"])
-        print("本轮未生成新报价；已保留完成的审核结果及上一次有效报价（如有）。")
+        print("本轮未生成新报价；已保留完成的审核结果。")
+        if result.get("portfolio_previous_plan"):
+            print("上一次有效报价已单独保留，可在确认后继续修订。")
         return
     plan = result.get("portfolio_plan")
     if not isinstance(plan, dict):
         return
     print_section("投放组合与建议价格")
     print("以下为待最终人工审核的草案，报价尚未成交，历史效果仅用于估算。")
+    planning = plan.get("planning") or {}
+    if any("proposal" in item or item.get("reason") in {"model_response_invalid", "model_unavailable"}
+           for item in planning.get("rejected") or []):
+        print("部分模型建议未通过核验或模型暂不可用，未采用这些建议；本次按已核验条件继续计算。")
     budget = plan["budget"]
     print(f"预算上限 ¥{budget['limit']:,.2f}；建议总价 ¥{budget['total_suggested']:,.2f}；"
           f"区间上限合计 ¥{budget['total_upper']:,.2f}。")

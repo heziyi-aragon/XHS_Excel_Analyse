@@ -65,7 +65,7 @@ def make_portfolio_handoff_node(llm_client: Any = None):
                     'workflow_status': 'portfolio_needs_input',
                     'next_step': {'name': 'build_portfolio', 'display_name': '投放组合，拟定价格',
                                   'implemented': True, 'status': 'needs_input',
-                                  'message': '审核结果已保留；请修正组合输入后重新计算：' + str(error)}}
+                                  'message': '审核结果已保留；确认上述要求后重新运行本步骤。'}}
         plan = update['portfolio_plan']
         has_lines = bool(plan['lines'])
         message = ('组合草案已生成，须携带KPI缺口、缺数及未核实事项交给最终人工审核；写建议节点尚未实现。'

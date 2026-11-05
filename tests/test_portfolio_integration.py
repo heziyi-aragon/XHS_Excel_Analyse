@@ -130,6 +130,69 @@ def test_optional_portfolio_client_is_explicit_and_cannot_change_the_numeric_pla
         assert result["portfolio_plan"][field] == original["portfolio_plan"][field]
 
 
+@pytest.mark.parametrize("invalid_schema", [False, True])
+def test_unusable_advisory_output_still_hands_a_valid_plan_to_suggestions(
+        graph_modes, invalid_schema, tmp_path, monkeypatch, capsys):
+    audit, baseline, _, _ = graph_modes
+
+    def model(_system, payload):
+        if invalid_schema:
+            return {"unexpected": "unusable model response"}
+        brief = payload["brief_fields"]
+        return {"proposals": [
+            {"path": "budget", "value": 350000,
+             "source_quote": brief["raw"]["总预算"], "source_kind": "brief"},
+            {"path": "price_multiplier", "value": 1.2,
+             "source_quote": brief["notes"], "source_kind": "brief"},
+        ]}
+
+    result, _ = _run_graph(annotation_client=LLMClient(transport=model))
+    assert result["portfolio_error"] is None
+    assert result["next_step"]["name"] == "write_suggestions"
+    assert result["next_step"]["status"] == "interface_ready"
+    assert result["portfolio_plan"]["planning"]["rejected"]
+    assert result["portfolio_plan"]["planning"]["pending"] == []
+    for field in ("lines", "budget", "kpi_checks", "upstream_risks"):
+        assert result["portfolio_plan"][field] == baseline["portfolio_plan"][field]
+    for field in _AUDIT_FIELDS:
+        assert result.get(field) == audit.get(field), field
+    original = deepcopy(result)
+    monkeypatch.setattr(main_module, "BASE", tmp_path)
+    saved = json.loads(main_module.save_result(result).read_text(encoding="utf-8"))
+    assert saved["portfolio_plan"]["planning"] == result["portfolio_plan"]["planning"]
+    assert saved["portfolio_error"] is None
+    main_module.render_shortlist(result)
+    rendered = capsys.readouterr().out
+    assert "部分模型建议未通过核验" in rendered
+    assert "下一步：写建议" in rendered
+    assert "unverified_model_proposals_require_review" not in rendered
+    assert result == original
+
+
+@pytest.mark.parametrize("with_previous", [False, True])
+def test_real_clarification_has_readable_output_and_preserves_diagnostics(
+        graph_modes, with_previous, capsys):
+    audit, baseline, _, _ = graph_modes
+    state = deepcopy(audit)
+    if with_previous:
+        state["portfolio_plan"] = deepcopy(baseline["portfolio_plan"])
+    state["portfolio_feedback"] = "更有性价比"
+    state.update(make_portfolio_handoff_node()(state))
+    assert state["portfolio_plan"] is None
+    assert state["workflow_status"] == "portfolio_needs_input"
+    assert state["portfolio_error"]["planning"]["pending"]
+    assert state["portfolio_previous_plan"] == (baseline["portfolio_plan"] if with_previous else None)
+    original = deepcopy(state)
+    main_module.render_shortlist(state)
+    rendered = capsys.readouterr().out
+    assert rendered.count("更有性价比") == 1
+    assert "请明确具体折扣、篇数或内容形式" in rendered
+    assert "source_kind" not in rendered
+    assert "request_has_no_supported_executable_value" not in rendered
+    assert ("上一次有效报价已单独保留" in rendered) == with_previous
+    assert state == original
+
+
 def test_save_step9_preserves_existing_step8_snapshot_and_all_audit_evidence(tmp_path, monkeypatch, graph_modes):
     audit, integrated, _, _ = graph_modes
     monkeypatch.setattr(main_module, "BASE", tmp_path)

@@ -63,6 +63,9 @@ CPE按总费用上界除以总预计互动检查，另提供建议价口径；�
 注入模型时，模型必须返回path/value/source_quote/source_kind；代码校验路径、候选身份、原文引用和可独立解析的值，拒绝编造事实、无依据数字及未知身份。
 明确配置优先；顾问自由文本不能擅自放宽甲方预算/KPI。无法执行的意见保留pending，主图报告needs_clarification，不假装已重定价。
 规划的accepted/rejected/pending及执行阶段写入结果。模型失效时可执行的确定性规则仍可运行，未解决意见须明确处理。
+模型格式错误、错误数值、假引文等只进入rejected，不单独构成业务阻断；原始需求、客户补答或真实报价反馈中的未解要求才进入pending。因此首轮资料完整时，拒绝模型建议后仍按已核验条件生成组合，CLI提示回退情况，JSON保留原始诊断。
+重复预算提案只能用原始“总预算”字段的完整金额核对，并与brief.total_budget一致；已知值记为accepted/action=retained_existing，不覆盖显式配置或后续客户修订。其他价格、金额片段不能冒充预算；原始预算与结构化预算明确冲突时暂停核对。
+“允许上下浮动20%”是价格走廊，不是统一乘1.2的指令。否定、历史、条件或价格上下界的提及不作为已选倍率；引用片段还须通过完整来源上下文核对。暂不支持的明确视频篇数、形式占比或达人人数硬要求进入pending，软形式偏好不升级为硬配额。
 库函数默认不隐式启用报价模型，可离线运行；`main.py` 命令行复用已配置客户端进行报价规划。独立入口用--llm显式启用。
 新增报价规划及定价尚未运行真实模型API；离线测试不能证明真实模型准确率、行情真实性或投放结果。
 
@@ -80,6 +83,7 @@ feedback_id/review_id用于幂等：同反馈标识、同输入及同有效配�
 
 portfolio_plan保留方案、预算、KPI、逐行valuation、planning、有效配置、修订历史及完整上游风险；status为ready/best_effort/no_candidates/needs_pricing。
 顶层workflow_status为portfolio_加方案状态，旧审核状态与交接保存在audit_workflow_status/audit_next_step。报价输入或规划错误保存portfolio_error及原审核，不乱补预算或报价。
+需要澄清时，控制台给出中文原因和可操作示例，避免重复打印内部字典；完整planning及上一轮有效报价仍保留在状态中。成功回退不改变最终投放仍需人工审批的边界。
 成功交接指向尚未实现的write_suggestions；有投放行为interface_ready，无投放行为no_portfolio。报价复核回路可在交接前请求新修订。
 main保存 `output/step9_portfolio.json`，不覆盖旧step8文件；审核停止模式仍保存step8。独立工具另存新文件，保留upstream_state。
 
