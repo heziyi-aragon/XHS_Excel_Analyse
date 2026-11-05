@@ -213,14 +213,16 @@ def test_real_graph_rewrites_once_reaudits_only_changed_person_and_preserves_his
             assert latest["error"] and latest["tag"] is None
     # 这份模拟表另有缺数达人：按 workflow 标记放行，不提前卡到人工节点。
     assert result["supplement_results"]
+    assert result["workflow_status"] == "portfolio_" + result["portfolio_plan"]["status"]
+    assert result["next_step"]["name"] == "write_suggestions"
     if mode == "fixed":
-        assert result["workflow_status"] == "audit_complete_with_incomplete_data"
-        assert result["next_step"]["name"] == "build_portfolio"
+        assert result["audit_workflow_status"] == "audit_complete_with_incomplete_data"
+        assert result["audit_next_step"]["name"] == "build_portfolio"
         assert result["manual_review_queue"] == []
     else:
-        assert result["workflow_status"] == "audit_complete_with_pending"
-        assert result["next_step"]["name"] == "build_portfolio"
-        assert result["next_step"]["status"] == "interface_ready"
+        assert result["audit_workflow_status"] == "audit_complete_with_pending"
+        assert result["audit_next_step"]["name"] == "build_portfolio"
+        assert result["audit_next_step"]["status"] == "interface_ready"
         assert result["pricing_candidates"]
         assert next(row for row in result["audited_talents"] if row["nickname"] == target)["release_status"] == "held_for_review"
         assert {task["nickname"] for task in result["audit_pending"]} == {target}

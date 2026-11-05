@@ -68,6 +68,19 @@ class GraphState(TypedDict, total=False):
     audit_unverified_checks: list[dict]  # 策略人工检查项，无核实证据时保持 unverified，随方案交接
     manual_review_queue: list[dict]  # 兼容旧交接格式，始终为空；不再产生提前人工业务节点
 
+    # -- 第九步：组合与定价；审核快照独立保留，不改变任何单人评估 --
+    portfolio_plan: dict | None
+    portfolio_config: dict
+    portfolio_feedback: dict | str | None
+    portfolio_config_patch: dict | None
+    portfolio_error: dict | None
+    portfolio_previous_plan: dict | None
+    portfolio_review: dict
+    portfolio_review_status: str
+    portfolio_review_history: list[dict]
+    audit_workflow_status: str
+    audit_next_step: dict
+
     # -- 后续步骤需要的输入说明 --
     next_step: dict
 
@@ -76,5 +89,7 @@ class GraphState(TypedDict, total=False):
     # reasons_ready / audit_rewrite_required / rewriting_reasons / audit_complete /
     # audit_complete_with_incomplete_data（补数失败标记放行）/
     # audit_needs_resolution / reevaluating_after_supplement（补数后重新评估）/
-    # audit_complete_with_pending（部分暂存，其余继续）
+    # audit_complete_with_pending（部分暂存，其余继续）/
+    # portfolio_ready / portfolio_best_effort / portfolio_no_candidates /
+    # portfolio_needs_pricing / portfolio_needs_input
     workflow_status: str

@@ -206,7 +206,9 @@ def test_main_graph_recovers_real_file_values_from_an_in_memory_hole(monkeypatch
     assert source["cpuv"] is not None and latest["talent"]["cpuv"] == source["cpuv"]
     assert found["input_check"]["source_path"] == str(path)
     assert latest["data_revision"] == 1 and latest["attempt"] == 2
-    assert result["next_step"]["name"] == "build_portfolio"
+    assert result["next_step"]["name"] == "write_suggestions"
+    assert result["audit_next_step"]["name"] == "build_portfolio"
+    assert result["workflow_status"] == "portfolio_" + result["portfolio_plan"]["status"]
     assert len([row for row in writes if row["nickname"] == target]) == 2
     assert all(sum(row["nickname"] == name for row in writes) == 1 for name in {row["nickname"] for row in writes} - {target})
     assert all(sum(row["nickname"] == name for row in audits) == 1 for name in {row["nickname"] for row in audits} - {target})
