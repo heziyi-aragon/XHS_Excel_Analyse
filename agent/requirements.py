@@ -8,6 +8,9 @@ import json
 import os
 import re
 from typing import Any, Callable
+from agent.runtime_logging import log_llm_call
+from agent.runtime_logging import LOGGER, CURRENT_NODE
+from time import perf_counter
 
 from agent.domain import (
     ALLOWED_CRITERION_OPERATORS,
@@ -40,6 +43,8 @@ class LLMClient:
         transport: JsonTransport | None = None,
         trust_env: bool = False,
         timeout_seconds: float = 120.0,
+        max_retries: int | None = None,
+        stream: bool = False,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
@@ -47,6 +52,8 @@ class LLMClient:
         self.transport = transport
         self.trust_env = trust_env
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.stream = stream
 
     @classmethod
     def from_env(cls) -> "LLMClient":
@@ -66,6 +73,7 @@ class LLMClient:
             trust_env=os.getenv("LLM_TRUST_ENV", "false").strip().lower()
             in {"1", "true", "yes", "on"},
             timeout_seconds=cls._read_timeout(),
+            stream=os.getenv("LLM_STREAM", "false").strip().lower() in {"1", "true", "yes", "on"},
         )
 
     @staticmethod
@@ -79,6 +87,7 @@ class LLMClient:
             raise RuntimeError("LLM_TIMEOUT_SECONDS 必须大于 0")
         return timeout
 
+    @log_llm_call
     def complete_json(
         self, system_prompt: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
@@ -108,9 +117,13 @@ class LLMClient:
         }
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
+        if self.max_retries is not None:
+            client_kwargs["max_retries"] = self.max_retries
+        import httpx
+
         client = OpenAI(**client_kwargs)
         try:
-            response = client.chat.completions.create(
+            request = dict(
                 model=self.model,
                 temperature=0,
                 response_format={"type": "json_object"},
@@ -122,21 +135,47 @@ class LLMClient:
                     },
                 ],
             )
-        except APITimeoutError as exc:
+            if self.stream:
+                request["stream"] = True
+            response = client.chat.completions.create(**request)
+            if self.stream:
+                started = perf_counter()
+                parts = []
+                first_chunk = True
+                try:
+                    for chunk in response:
+                        if first_chunk:
+                            LOGGER.info("llm.first_chunk node=%s after_headers=%.3fs",
+                                        CURRENT_NODE.get(), perf_counter() - started)
+                            first_chunk = False
+                        for choice in chunk.choices:
+                            if choice.index != 0:
+                                continue
+                            if choice.delta.content:
+                                parts.append(choice.delta.content)
+                            if choice.finish_reason in {"length", "content_filter"}:
+                                raise LLMResponseError("流式模型回答未完整完成：" + choice.finish_reason)
+                finally:
+                    response.close()
+                content = "".join(parts)
+            else:
+                content = response.choices[0].message.content or ""
+        except (APITimeoutError, httpx.TimeoutException) as exc:
             route = (
                 "当前正在读取 HTTP_PROXY/HTTPS_PROXY，请检查代理地址和端口。"
                 if self.trust_env
-                else "程序已忽略 HTTP_PROXY/HTTPS_PROXY；请确认 Clash Verge 的 TUN 模式和当前节点可用。"
+                else "程序未读取代理环境变量；请检查接口地址、网络及代理配置（如使用）。"
             )
             raise LLMServiceError(f"连接模型服务超时。{route}") from exc
-        except APIConnectionError as exc:
+        except (APIConnectionError, httpx.TransportError) as exc:
             route = (
                 "请检查 HTTP_PROXY/HTTPS_PROXY 的协议、地址和端口。"
                 if self.trust_env
-                else "请确认 Clash Verge 的 TUN 模式和当前节点可用。"
+                else "请检查接口地址、网络及代理配置（如使用）；具体异常链见运行日志。"
             )
             raise LLMServiceError(f"无法连接模型服务。{route}") from exc
-        content = response.choices[0].message.content or ""
+        finally:
+            client.close()
         try:
             result = json.loads(content)
         except json.JSONDecodeError as exc:

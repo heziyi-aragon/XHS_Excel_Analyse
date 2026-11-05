@@ -8,6 +8,7 @@ from langgraph.types import Send
 from agent.evaluation import EvaluationAgent
 from agent.reasons import BAND_MID, MAX_REASON_ATTEMPTS, person_key
 from agent.requirements import LLMClient, LLMServiceError
+from agent.runtime_logging import LOGGER
 
 
 class EvaluationNodes:
@@ -72,6 +73,7 @@ def route_reasons(state: dict[str, Any]) -> str | list[Send]:
                 },
             )
         )
+    LOGGER.info("reasons.batch total=%s", len(sends))
     if not sends:
         return "collect_reasons"
     return sends

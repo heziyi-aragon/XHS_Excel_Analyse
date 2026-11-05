@@ -81,6 +81,12 @@ class GraphState(TypedDict, total=False):
     audit_workflow_status: str
     audit_next_step: dict
 
+    # -- 第十步：内容建议，保留投放项及对应方案版本 --
+    recommendations: list[dict]
+    advice_history: list[dict]
+    advice_preview_path: str | None
+    advice_preview_error: str | None
+
     # -- 后续步骤需要的输入说明 --
     next_step: dict
 

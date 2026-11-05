@@ -6,6 +6,7 @@ can pass its review callback; the standalone adapter otherwise pauses for input.
 from copy import deepcopy
 
 from agent.nodes.portfolio import PortfolioState, make_portfolio_handoff_node
+from agent.runtime_logging import add_logged_node
 
 
 def portfolio_feedback_interrupt(state: dict) -> dict:
@@ -72,13 +73,29 @@ def route_after_review(state: dict) -> str:
     return 'reprice' if state.get('portfolio_review_status') == 'reprice_requested' else 'end'
 
 
-def attach_review_loop(graph, *, review_node=None, max_revisions=3):
+def attach_review_loop(
+    graph, *, review_node=None, max_revisions=3, handoff_node=None
+):
     from langgraph.graph import END
-    graph.add_node('portfolio_review', make_review_adapter(review_node, max_revisions))
+    add_logged_node(graph, 'portfolio_review', make_review_adapter(review_node, max_revisions))
     graph.add_conditional_edges('build_portfolio', route_after_portfolio,
                                 {'review': 'portfolio_review', 'end': END})
-    graph.add_conditional_edges('portfolio_review', route_after_review,
-                                {'reprice': 'build_portfolio', 'end': END})
+
+    def route_review(state):
+        if state.get('portfolio_review_status') == 'reprice_requested':
+            return 'reprice'
+        if (handoff_node is not None
+                and state.get('portfolio_review_status') == 'accepted_for_handoff'):
+            from agent.nodes.advice import route_to_advice
+
+            if route_to_advice(state) == 'advice':
+                return 'handoff'
+        return 'end'
+
+    destinations = {'reprice': 'build_portfolio', 'end': END}
+    if handoff_node is not None:
+        destinations['handoff'] = handoff_node
+    graph.add_conditional_edges('portfolio_review', route_review, destinations)
 
 
 def build_repricing_graph(review_node=None, llm_client=None, *, max_revisions=3, checkpointer=None):

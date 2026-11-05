@@ -158,6 +158,30 @@ python -m pytest tests/ -q
 
 如果使用 Clash Verge，建议开启 TUN 模式，然后直接运行 `python main.py`。程序默认不读取 PowerShell 中的 `HTTP_PROXY` 和 `HTTPS_PROXY`，可避免代理协议或端口不匹配造成的 SSL/超时问题，因此无需每次手动设置代理变量。只有在没有 TUN、必须让 Python 显式经过应用代理时，才在 `.env` 中设置 `LLM_TRUST_ENV=true`；模型响应超时时间可用 `LLM_TIMEOUT_SECONDS` 调整，默认 120 秒。
 
+### 运行日志与连接排查
+
+执行`python main.py`时，终端首先显示本次日志路径：
+`output/logs/run_YYYYMMDD_HHMMSS_<标识>.log`。每次运行创建独立UTF-8日志，时间使用香港时区。
+
+日志记录节点开始、结束、暂停、耗时，以及模型请求的节点、模型、接口主机、代理开关和异常链。例如：
+
+```text
+INFO node.start node=analyze_requirements
+INFO llm.start request=... node=analyze_requirements model=... host=... transport=api trust_env=False
+ERROR llm.error request=... node=analyze_requirements elapsed=... error=LLMServiceError <- APIConnectionError <- ConnectError <- gaierror errno=8
+ERROR node.error node=analyze_requirements ...
+```
+
+先找`llm.error`或`node.error`定位失败步骤；`errno`、HTTP `status_code`及异常类用于区分DNS、连接、证书、鉴权或服务状态问题。日志不保存API密钥、提示词、请求/响应正文或人工修改意见，也不输出SDK原始错误正文；不能仅凭通用Clash提示认定代理有问题。SDK内部自动重试计入该次调用耗时，不逐次记录。
+
+人工确认触发的LangGraph暂停记录为`node.pause`。最终审核拒绝/批准、CLI内重新定价和重新写建议也会记录。节点结束仅表示函数返回，业务处理是否可用还需结合状态和`node.business_error`；日志不会代替审核结果JSON。
+
+可在VS Code打开日志，或将终端显示的路径代入：
+
+```bash
+tail -n 80 output/logs/具体日志文件名.log
+```
+
 ### 7.4 投放组合与建议价格
 
 第9步在求解前处理需求原文、客户补答及报价反馈。支持的篇数、指定形式、折扣、预算和KPI修订先转成可执行配置，模型提出的值必须有原文引用，并由代码独立校验身份、数字和约束。无法解析、冲突或没有依据的请求进入待澄清状态，不能假装已执行。`main.py` 命令行复用已配置的模型客户端进行报价规划；`build_graph` 库接口仍需显式传入 `portfolio_llm_client`，可离线使用确定性路径。

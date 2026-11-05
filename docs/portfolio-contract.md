@@ -84,7 +84,7 @@ feedback_id/review_id用于幂等：同反馈标识、同输入及同有效配�
 portfolio_plan保留方案、预算、KPI、逐行valuation、planning、有效配置、修订历史及完整上游风险；status为ready/best_effort/no_candidates/needs_pricing。
 顶层workflow_status为portfolio_加方案状态，旧审核状态与交接保存在audit_workflow_status/audit_next_step。报价输入或规划错误保存portfolio_error及原审核，不乱补预算或报价。
 需要澄清时，控制台给出中文原因和可操作示例，避免重复打印内部字典；完整planning及上一轮有效报价仍保留在状态中。成功回退不改变最终投放仍需人工审批的边界。
-成功交接指向尚未实现的write_suggestions；有投放行为interface_ready，无投放行为no_portfolio。报价复核回路可在交接前请求新修订。
+成功交接至write_advice；第10步生成建议及未审核Excel预览，人工审核通过后导出正式表格。无投放行时不调用写建议。报价复核回路可在交接前请求新修订。
 main保存 `output/step9_portfolio.json`，不覆盖旧step8文件；审核停止模式仍保存step8。独立工具另存新文件，保留upstream_state。
 
 ```bash

@@ -564,7 +564,7 @@ def build_portfolio_plan(state: dict, config: dict | None = None, *,
     if conditional:
         warnings.append('Unpriced conditional candidates are retained separately and are not included as zero-cost commitments.')
     if any(item['status'] in {'proxy_unmet', 'not_evaluable'} for item in checks.values()):
-        warnings.append('One or more client KPIs remain unmet or not evaluable under the stated planning assumptions.')
+        warnings.append('按当前方案估算，一个或多个客户KPI未达标或暂时无法评估（请检查第9步）。')
     if not configured_checks:
         warnings.append('No supported KPI targets were found; none were invented.')
     if exception:

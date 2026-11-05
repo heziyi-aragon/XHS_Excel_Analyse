@@ -7,9 +7,11 @@ from uuid import uuid4
 from langgraph.types import Command
 
 from agent.graph import build_graph
+from agent.advice_review import review_until_complete
 from agent.domain import FIELD_LABELS, PolicyValidationError
 from agent.reasons import BAND_LABELS
 from agent.requirements import LLMClient, LLMServiceError
+from agent.runtime_logging import LOGGER, error_chain, setup_runtime_logging
 
 BASE = Path(__file__).parent
 STATIC = BASE / "static"
@@ -133,7 +135,9 @@ def describe_criterion(criterion: dict, index: int) -> str:
 def save_result(result: dict) -> Path:
     """保存分析及后续交接数据；图暂停恢复仍依赖当前进程的 checkpointer。"""
     has_portfolio = isinstance(result.get("portfolio_plan"), dict) or bool(result.get("portfolio_error"))
-    filename = ("step9_portfolio.json" if has_portfolio else
+    has_advice = "recommendations" in result
+    filename = ("step10_advice.json" if has_advice else
+                "step9_portfolio.json" if has_portfolio else
                 "step8_audit.json" if "audited_talents" in result else "step7_recommendations.json")
     out = BASE / "output" / filename
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -174,6 +178,11 @@ def save_result(result: dict) -> Path:
         keys += ("portfolio_plan", "portfolio_config", "portfolio_feedback", "portfolio_error",
                  "portfolio_config_patch", "portfolio_previous_plan", "portfolio_review",
                  "portfolio_review_status", "portfolio_review_history", "audit_workflow_status", "audit_next_step")
+    if has_advice:
+        keys += ("recommendations", "advice_preview_path", "advice_preview_error",
+                 "review_status", "human_review", "final_export_path", "final_export_error")
+    keys += ("review_status", "human_review_history") if not has_advice else ("human_review_history",)
+    keys += ("advice_history",)
     out.write_text(
         json.dumps(
             {key: result.get(key) for key in keys},
@@ -584,23 +593,35 @@ def main() -> None:
     else:
         print("你已同意这套筛选方案，并已完成清洗、筛选、打分、理由审核及可执行的自动重写。")
     render_shortlist(result)
+    if result.get("recommendations"):
+        review_until_complete(result, BASE / "output", LLMClient.from_env(), save=save_result)
+        out = save_result(result)
     print(f"\n本轮状态已保存至：{out}")
 
 
 def run_cli() -> None:
     """运行命令行程序，并把可恢复的联网故障转成简短提示。"""
+    log_path = setup_runtime_logging(BASE / "output" / "logs")
+    print(f"运行日志：{log_path}")
     try:
         main()
+        LOGGER.info("run.end")
     except LLMServiceError as exc:
+        LOGGER.error("run.error error=%s", error_chain(exc))
         print(f"\n这次没有连上模型服务：{exc}")
         print("确认网络恢复后重新运行即可，需求文件和达人数据不会受影响。")
         raise SystemExit(1) from None
     except PolicyValidationError as exc:
+        LOGGER.error("run.error error=%s", error_chain(exc))
         print("\n这次生成的筛选方案没有通过完整性检查，因此没有提交给你审核：")
         for error in exc.errors:
             print(f"  · {error}")
         print("请重新运行；如果问题反复出现，需要检查需求内容或生成规则。")
         raise SystemExit(1) from None
+    except Exception as exc:
+        LOGGER.error("run.error error=%s", error_chain(exc))
+        print(f"运行失败，详细步骤请查看：{log_path}")
+        raise
 
 
 if __name__ == "__main__":

@@ -68,13 +68,13 @@ def make_portfolio_handoff_node(llm_client: Any = None):
                                   'message': '审核结果已保留；确认上述要求后重新运行本步骤。'}}
         plan = update['portfolio_plan']
         has_lines = bool(plan['lines'])
-        message = ('组合草案已生成，须携带KPI缺口、缺数及未核实事项交给最终人工审核；写建议节点尚未实现。'
+        message = ('组合草案已生成，下一步生成投放建议及未审核Excel预览；KPI缺口、缺数及未核实事项将保留供最终人工审核。'
                    if has_lines else '当前没有可执行的已定价组合；候选及核价问题已保留，暂不能写投放建议。')
         return {**snapshot, **update, 'portfolio_error': None, 'portfolio_config_patch': None,
                 'portfolio_previous_plan': None,
                 'workflow_status': 'portfolio_' + plan['status'],
-                'next_step': {'name': 'write_suggestions', 'display_name': '写建议',
-                              'implemented': False,
+                'next_step': {'name': 'write_advice', 'display_name': '写建议',
+                              'implemented': True,
                               'status': 'interface_ready' if has_lines else 'no_portfolio',
                               'required_state': ['portfolio_plan', 'audited_talents', 'audit_pending',
                                                  'supplement_results', 'audit_unverified_checks',

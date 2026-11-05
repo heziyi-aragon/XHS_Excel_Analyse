@@ -4,6 +4,7 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from agent.nodes.advice import make_advice_node, route_to_advice
 from agent.nodes.audit import AuditNodes
 from agent.nodes.audit_handoff import finalize_audit
 from agent.nodes.evaluation import EvaluationNodes, collect_reasons, route_reasons
@@ -27,6 +28,7 @@ from agent.nodes.screening import (
 )
 from agent.requirements import LLMClient
 from agent.state import GraphState
+from agent.runtime_logging import add_logged_node
 
 
 def build_graph(
@@ -46,27 +48,28 @@ def build_graph(
     evaluation_nodes = EvaluationNodes(llm)
     audit_nodes = AuditNodes(audit_llm_client if audit_llm_client is not None else llm)
 
-    g.add_node("load_inputs", load_inputs)
-    g.add_node("analyze_requirements", requirement_nodes.analyze_requirements)
-    g.add_node(
+    add_logged_node(g, "load_inputs", load_inputs)
+    add_logged_node(g, "analyze_requirements", requirement_nodes.analyze_requirements)
+    add_logged_node(g, 
         "request_client_confirmation",
         requirement_nodes.request_client_confirmation,
     )
-    g.add_node("build_screening_policy", requirement_nodes.build_screening_policy)
-    g.add_node("review_policy", requirement_nodes.review_policy)
-    g.add_node("prepare_next_step", prepare_next_step)
-    g.add_node("preprocess_table", preprocess_table)
-    g.add_node("screen_talents", screen_talents)
-    g.add_node("relax_screening", relax_screening)
-    g.add_node("score_talents", score_talents)
-    g.add_node("write_one_reason", evaluation_nodes.write_one_reason)
-    g.add_node("collect_reasons", collect_reasons)
-    g.add_node("audit_reasons", audit_nodes.audit_reasons)
-    g.add_node("prepare_reason_rewrites", prepare_reason_rewrites)
-    g.add_node("finalize_audit", finalize_audit)
-    g.add_node("supplement_data", supplement_data)
+    add_logged_node(g, "build_screening_policy", requirement_nodes.build_screening_policy)
+    add_logged_node(g, "review_policy", requirement_nodes.review_policy)
+    add_logged_node(g, "prepare_next_step", prepare_next_step)
+    add_logged_node(g, "preprocess_table", preprocess_table)
+    add_logged_node(g, "screen_talents", screen_talents)
+    add_logged_node(g, "relax_screening", relax_screening)
+    add_logged_node(g, "score_talents", score_talents)
+    add_logged_node(g, "write_one_reason", evaluation_nodes.write_one_reason)
+    add_logged_node(g, "collect_reasons", collect_reasons)
+    add_logged_node(g, "audit_reasons", audit_nodes.audit_reasons)
+    add_logged_node(g, "prepare_reason_rewrites", prepare_reason_rewrites)
+    add_logged_node(g, "finalize_audit", finalize_audit)
+    add_logged_node(g, "supplement_data", supplement_data)
     if enable_portfolio:
-        g.add_node("build_portfolio", make_portfolio_handoff_node(portfolio_llm_client))
+        add_logged_node(g, "build_portfolio", make_portfolio_handoff_node(portfolio_llm_client))
+        add_logged_node(g, "write_advice", make_advice_node(llm))
 
     g.add_edge(START, "load_inputs")
     g.add_edge("load_inputs", "analyze_requirements")
@@ -111,9 +114,19 @@ def build_graph(
     if enable_portfolio:
         g.add_edge("finalize_audit", "build_portfolio")
         if portfolio_review_node is not None:
-            attach_review_loop(g, review_node=portfolio_review_node, max_revisions=max_portfolio_revisions)
+            attach_review_loop(
+                g,
+                review_node=portfolio_review_node,
+                max_revisions=max_portfolio_revisions,
+                handoff_node="write_advice",
+            )
         else:
-            g.add_edge("build_portfolio", END)
+            g.add_conditional_edges(
+                "build_portfolio",
+                route_to_advice,
+                {"advice": "write_advice", "end": END},
+            )
+        g.add_edge("write_advice", END)
     else:
         g.add_edge("finalize_audit", END)
 
