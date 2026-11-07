@@ -154,9 +154,11 @@ python main.py
 python -m pytest tests/ -q
 ```
 
-`.env` 配置：`API_KEY`、`BASE_URL`（OpenAI 兼容接口，如 `https://api.deepseek.com`）以及 `LLM_MODEL`（如 `deepseek-flash`）。默认运行到第9步并写入 `output/step9_portfolio.json`。
+`.env` 使用五条模块主线路和一条全局备用线路，完整变量见 [`.env.example`](.env.example)：`LLM_REQUIREMENTS_*` 供需求分析与筛选策略使用，`LLM_EVALUATION_*` 供理由生成与重写使用，`LLM_AUDIT_*` 供审核使用，`LLM_PORTFOLIO_*` 供组合规划与重新定价使用，`LLM_ADVICE_*` 供内容建议使用，`LLM_BACKUP_*` 是全局备用接口。
 
-如果使用 Clash Verge，建议开启 TUN 模式，然后直接运行 `python main.py`。程序默认不读取 PowerShell 中的 `HTTP_PROXY` 和 `HTTPS_PROXY`，可避免代理协议或端口不匹配造成的 SSL/超时问题，因此无需每次手动设置代理变量。只有在没有 TUN、必须让 Python 显式经过应用代理时，才在 `.env` 中设置 `LLM_TRUST_ENV=true`；模型响应超时时间可用 `LLM_TIMEOUT_SECONDS` 调整，默认 120 秒。
+每条线路分别配置 `API_KEY`、`BASE_URL`、`MODEL`、`TIMEOUT_SECONDS` 和 `STREAM`。主线路配置不完整时该模块启动即使用备用线路；连接、HTTP、非法 JSON 或模块格式校验失败后，该模块在本次进程剩余时间内固定使用备用线路，重启程序后重新尝试主线路。备用线路配置无效时程序明确报错并停止。默认运行到第10步并写入 `output/step10_advice.json`。
+
+如果使用 Clash Verge，建议开启 TUN 模式，然后直接运行 `python main.py`。程序默认不读取 PowerShell 中的 `HTTP_PROXY` 和 `HTTPS_PROXY`，可避免代理协议或端口不匹配造成的 SSL/超时问题，因此无需每次手动设置代理变量。只有在没有 TUN、必须让 Python 显式经过应用代理时，才在 `.env` 中设置 `LLM_TRUST_ENV=true`；每条线路的超时分别由对应的 `LLM_<模块>_TIMEOUT_SECONDS` 调整。
 
 ### 运行日志与连接排查
 

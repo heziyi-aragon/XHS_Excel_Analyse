@@ -32,6 +32,12 @@ class LLMServiceError(RuntimeError):
     """模型服务因网络或代理问题暂时不可用。"""
 
 
+def report_llm_validation_failure(client: object, error: Exception) -> bool:
+    """通知可熔断客户端模型输出格式无效；普通或测试客户端保持兼容。"""
+    reporter = getattr(client, "report_validation_failure", None)
+    return bool(reporter(error)) if callable(reporter) else False
+
+
 class LLMClient:
     """OpenAI 兼容接口的最小封装，支持注入假客户端进行离线测试。"""
 
@@ -102,7 +108,9 @@ class LLMClient:
 
         try:
             from openai import (
+                APIError,
                 APIConnectionError,
+                APIStatusError,
                 APITimeoutError,
                 DefaultHttpxClient,
                 OpenAI,
@@ -174,6 +182,10 @@ class LLMClient:
                 else "请检查接口地址、网络及代理配置（如使用）；具体异常链见运行日志。"
             )
             raise LLMServiceError(f"无法连接模型服务。{route}") from exc
+        except APIStatusError as exc:
+            raise LLMServiceError(f"模型服务返回 HTTP {exc.status_code}，当前线路不可用。") from exc
+        except APIError as exc:
+            raise LLMServiceError(f"模型 SDK 请求失败：{type(exc).__name__}。") from exc
         finally:
             client.close()
         try:
@@ -263,15 +275,20 @@ clarification_questions, is_complete。
             "original_brief": brief_raw,
             "client_answers": client_answers,
         }
-        try:
-            result = self.llm.complete_json(self.SYSTEM_PROMPT, payload)
-        except LLMResponseError as first_error:
-            payload["correction"] = f"上次输出无法解析：{first_error}。请严格返回 JSON。"
-            result = self.llm.complete_json(self.SYSTEM_PROMPT, payload)
-
-        profile = RequirementProfile.from_dict(result)
-        self._apply_required_checks(profile)
-        return profile
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                result = self.llm.complete_json(self.SYSTEM_PROMPT, payload)
+                profile = RequirementProfile.from_dict(result)
+                self._apply_required_checks(profile)
+                return profile
+            except (LLMResponseError, ValueError, TypeError) as exc:
+                last_error = exc
+                report_llm_validation_failure(self.llm, exc)
+                if attempt == 0:
+                    payload["correction"] = f"上次输出无法解析：{exc}。请严格返回 JSON。"
+        assert last_error is not None
+        raise last_error
 
     @staticmethod
     def _apply_required_checks(profile: RequirementProfile) -> None:
@@ -445,6 +462,7 @@ class ScreeningPolicyAgent:
                 return policy
             except (LLMResponseError, PolicyValidationError) as exc:
                 last_error = exc
+                report_llm_validation_failure(self.llm, exc)
                 if attempt == 0:
                     payload["correction"] = {
                         "message": "上次输出未通过校验，请修正后完整重写 JSON。",

@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from agent.audit import AuditAgent
 from agent.audit_contract import AuditValidationError
+from agent.llm_routing import ModuleLLMClients
 from agent.requirements import LLMClient, LLMResponseError
 from scripts.audit_smoke import synthetic_state
 
@@ -357,7 +358,7 @@ def main() -> int:
         return 0
     client = None
     try:
-        client = LLMClient.from_env()
+        client = ModuleLLMClients.from_env().audit
         if not client.api_key or not client.base_url or not client.model:
             raise ValueError("API 配置不完整")
         client.timeout_seconds = args.timeout_seconds

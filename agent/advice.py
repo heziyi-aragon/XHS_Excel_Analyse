@@ -11,7 +11,12 @@ from decimal import Decimal, InvalidOperation
 from copy import deepcopy
 from typing import Any
 
-from agent.requirements import LLMClient, LLMResponseError, LLMServiceError
+from agent.requirements import (
+    LLMClient,
+    LLMResponseError,
+    LLMServiceError,
+    report_llm_validation_failure,
+)
 
 
 # 当前项目暂定分类，并非对历史 OLAY 表格「5大部分」的还原。
@@ -359,6 +364,7 @@ class AdviceAgent:
                     raise
                 except (LLMResponseError, AdviceValidationError) as exc:
                     last_error = str(exc)
+                    report_llm_validation_failure(self.llm, exc)
                     payload["correction"] = "上次输出校验失败，请完整重写 JSON：" + last_error
                 else:
                     record.update(advice)

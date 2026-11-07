@@ -18,7 +18,7 @@ from agent.reasons import (
     normalize_stance,
     tags_for_stance,
 )
-from agent.requirements import LLMClient, LLMResponseError
+from agent.requirements import LLMClient, LLMResponseError, report_llm_validation_failure
 
 
 class EvaluationAgent:
@@ -57,6 +57,7 @@ class EvaluationAgent:
                 return _draft_from_model(result, payload)
             except (LLMResponseError, ReasonValidationError) as exc:
                 last_error = exc
+                report_llm_validation_failure(self.llm, exc)
                 if attempt == 0:
                     request["correction"] = {
                         "message": "上次输出未通过校验，请按闭集标签完整重写 JSON。",

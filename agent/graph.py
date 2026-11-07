@@ -35,9 +35,11 @@ def build_graph(
     llm_client: LLMClient | None = None,
     checkpointer=None,
     *,
+    evaluation_llm_client: LLMClient | None = None,
     audit_llm_client: LLMClient | None = None,
     enable_portfolio: bool = True,
     portfolio_llm_client: LLMClient | None = None,
+    advice_llm_client: LLMClient | None = None,
     portfolio_review_node=None,
     max_portfolio_revisions: int = 3,
 ):
@@ -45,7 +47,9 @@ def build_graph(
     g = StateGraph(GraphState)
     llm = llm_client or LLMClient.from_env()
     requirement_nodes = RequirementNodes(llm)
-    evaluation_nodes = EvaluationNodes(llm)
+    evaluation_nodes = EvaluationNodes(
+        evaluation_llm_client if evaluation_llm_client is not None else llm
+    )
     audit_nodes = AuditNodes(audit_llm_client if audit_llm_client is not None else llm)
 
     add_logged_node(g, "load_inputs", load_inputs)
@@ -69,7 +73,11 @@ def build_graph(
     add_logged_node(g, "supplement_data", supplement_data)
     if enable_portfolio:
         add_logged_node(g, "build_portfolio", make_portfolio_handoff_node(portfolio_llm_client))
-        add_logged_node(g, "write_advice", make_advice_node(llm))
+        add_logged_node(
+            g,
+            "write_advice",
+            make_advice_node(advice_llm_client if advice_llm_client is not None else llm),
+        )
 
     g.add_edge(START, "load_inputs")
     g.add_edge("load_inputs", "analyze_requirements")

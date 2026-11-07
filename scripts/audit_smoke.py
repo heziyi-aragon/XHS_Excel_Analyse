@@ -21,6 +21,7 @@ from agent.nodes.audit_handoff import finalize_audit
 from agent.nodes.evaluation import EvaluationNodes, collect_reasons, route_reasons
 from agent.nodes.rewrite import prepare_reason_rewrites, route_after_audit
 from agent.nodes.supplement import route_after_supplement, supplement_data
+from agent.llm_routing import ModuleLLMClients
 from agent.requirements import LLMClient
 from agent.state import GraphState
 
@@ -87,7 +88,7 @@ def main() -> int:
     report = {"synthetic_data_only": True, "python_version": platform.python_version(), "calls": []}
     live = None
     try:
-        live = LLMClient.from_env()
+        live = ModuleLLMClients.from_env().audit
         if not live.api_key or not live.base_url or not live.model:
             raise ValueError("本地 API 配置不完整")
         live.timeout_seconds = args.timeout_seconds

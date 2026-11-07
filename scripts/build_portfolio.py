@@ -112,8 +112,8 @@ def main() -> int:
         feedback = read_json(args.feedback) if args.feedback else None
         client = None
         if args.llm:
-            from agent.requirements import LLMClient
-            client = LLMClient.from_env()
+            from agent.llm_routing import ModuleLLMClients
+            client = ModuleLLMClients.from_env().portfolio
         result = run(args.input, args.output, config=config, feedback=feedback,
                      llm_client=client, report_path=args.report, previous_path=args.previous)
         plan = result['portfolio_plan']

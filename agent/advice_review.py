@@ -73,10 +73,18 @@ def review_and_export(result: dict, output_dir: str | Path) -> bool:
     return False
 
 
-def review_until_complete(result: dict, output_dir: str | Path, llm, *, save=None) -> None:
+def review_until_complete(
+    result: dict,
+    output_dir: str | Path,
+    llm,
+    *,
+    advice_llm=None,
+    save=None,
+) -> None:
     """每轮报价交接后重新生成建议，直到人工确认或暂存。"""
+    advice_llm = advice_llm if advice_llm is not None else llm
     reprice = logged_node("build_portfolio", make_portfolio_handoff_node(llm))
-    advise = logged_node("write_advice", make_advice_node(llm, output_dir=output_dir))
+    advise = logged_node("write_advice", make_advice_node(advice_llm, output_dir=output_dir))
     while result.get("recommendations"):
         revise = logged_node("human_review", lambda state: review_and_export(state, output_dir))(result)
         if save is not None:

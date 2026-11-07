@@ -11,7 +11,7 @@ from agent.audit_contract import AuditResult, AuditValidationError, parse_audit_
 from agent.audit_rules import check_reason_rules, check_required_data
 from agent.domain import FIELD_LABELS, format_metric
 from agent.reasons import BAND_MID, RECOMMEND_TAGS, REJECT_TAGS, STANCE_RECOMMEND
-from agent.requirements import LLMClient, LLMResponseError
+from agent.requirements import LLMClient, LLMResponseError, report_llm_validation_failure
 
 
 class AuditAgent:
@@ -106,6 +106,7 @@ class AuditAgent:
                     "verdict": "reject" if issues else "pass", "issues": issues,
                 }, record)
             except (LLMResponseError, AuditValidationError) as exc:
+                report_llm_validation_failure(self.llm, exc)
                 if attempt == 1:
                     raise
                 request["correction"] = {

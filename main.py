@@ -7,10 +7,11 @@ from uuid import uuid4
 from langgraph.types import Command
 
 from agent.graph import build_graph
+from agent.llm_routing import LLMConfigurationError, ModuleLLMClients
 from agent.advice_review import review_until_complete
 from agent.domain import FIELD_LABELS, PolicyValidationError
 from agent.reasons import BAND_LABELS
-from agent.requirements import LLMClient, LLMServiceError
+from agent.requirements import LLMServiceError
 from agent.runtime_logging import LOGGER, error_chain, setup_runtime_logging
 
 BASE = Path(__file__).parent
@@ -536,7 +537,14 @@ def get_interrupt_payload(result: dict) -> dict:
 
 
 def main() -> None:
-    graph = build_graph(portfolio_llm_client=LLMClient.from_env())
+    clients = ModuleLLMClients.from_env()
+    graph = build_graph(
+        clients.requirements,
+        evaluation_llm_client=clients.evaluation,
+        audit_llm_client=clients.audit,
+        portfolio_llm_client=clients.portfolio,
+        advice_llm_client=clients.advice,
+    )
     # 图执行步数包含筛选放宽、重写与补数；它不同于单人的两轮评估上限。
     config = {"configurable": {"thread_id": f"cli-{uuid4()}"}, "recursion_limit": 64}
     result = graph.invoke(
@@ -594,7 +602,13 @@ def main() -> None:
         print("你已同意这套筛选方案，并已完成清洗、筛选、打分、理由审核及可执行的自动重写。")
     render_shortlist(result)
     if result.get("recommendations"):
-        review_until_complete(result, BASE / "output", LLMClient.from_env(), save=save_result)
+        review_until_complete(
+            result,
+            BASE / "output",
+            clients.portfolio,
+            advice_llm=clients.advice,
+            save=save_result,
+        )
         out = save_result(result)
     print(f"\n本轮状态已保存至：{out}")
 
@@ -610,6 +624,10 @@ def run_cli() -> None:
         LOGGER.error("run.error error=%s", error_chain(exc))
         print(f"\n这次没有连上模型服务：{exc}")
         print("确认网络恢复后重新运行即可，需求文件和达人数据不会受影响。")
+        raise SystemExit(1) from None
+    except LLMConfigurationError as exc:
+        LOGGER.error("run.error error=%s", error_chain(exc))
+        print(f"\n模型线路配置错误：{exc}")
         raise SystemExit(1) from None
     except PolicyValidationError as exc:
         LOGGER.error("run.error error=%s", error_chain(exc))

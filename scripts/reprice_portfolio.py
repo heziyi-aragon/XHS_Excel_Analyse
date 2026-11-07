@@ -24,8 +24,8 @@ def main() -> int:
         parser.error('Choose a distinct new report path')
     client = None
     if args.llm:
-        from agent.requirements import LLMClient
-        client = LLMClient.from_env()
+        from agent.llm_routing import ModuleLLMClients
+        client = ModuleLLMClients.from_env().portfolio
     source = read_json(args.input)
     graph = build_repricing_graph(llm_client=client, max_revisions=args.max_revisions)
     config = {'configurable': {'thread_id': 'reprice-' + uuid4().hex}, 'recursion_limit': 64}

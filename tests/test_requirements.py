@@ -6,6 +6,7 @@ import json
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -20,6 +21,17 @@ from main import describe_criterion, format_value, humanize_text
 
 
 DATA = Path(__file__).parent.parent / "static"
+
+
+def cli_module_clients() -> SimpleNamespace:
+    client = LLMClient(transport=lambda *_: reason_draft())
+    return SimpleNamespace(
+        requirements=client,
+        evaluation=client,
+        audit=client,
+        portfolio=client,
+        advice=client,
+    )
 
 
 def reason_draft() -> dict[str, Any]:
@@ -392,6 +404,7 @@ class RequirementNodeTests(unittest.TestCase):
         output = io.StringIO()
         with (
             patch.object(main_module, "build_graph", return_value=graph),
+            patch.object(main_module.ModuleLLMClients, "from_env", return_value=cli_module_clients()),
             patch.object(
                 main_module,
                 "save_result",
@@ -422,6 +435,7 @@ class RequirementNodeTests(unittest.TestCase):
         output = io.StringIO()
         with (
             patch.object(main_module, "build_graph", return_value=graph),
+            patch.object(main_module.ModuleLLMClients, "from_env", return_value=cli_module_clients()),
             patch.object(main_module, "save_result", return_value=Path("result.json")),
             patch("builtins.input", return_value=""),
             redirect_stdout(output),
@@ -444,6 +458,7 @@ class RequirementNodeTests(unittest.TestCase):
         output = io.StringIO()
         with (
             patch.object(main_module, "build_graph", return_value=graph),
+            patch.object(main_module.ModuleLLMClients, "from_env", return_value=cli_module_clients()),
             patch.object(main_module, "save_result", return_value=Path("result.json")),
             patch("builtins.input", side_effect=["提高进店量的权重", ""]),
             redirect_stdout(output),
